@@ -1372,9 +1372,9 @@ tsetattr(const int *attr, int l)
 			term.c.attr.fg = defaultfg;
 			term.c.attr.bg = defaultbg;
 			break;
-		case 1:
-			term.c.attr.mode |= ATTR_BOLD;
-			break;
+		// case 1: /* font bold */
+		// 	term.c.attr.mode |= ATTR_BOLD;
+		// 	break;
 		case 2:
 			term.c.attr.mode |= ATTR_FAINT;
 			break;
