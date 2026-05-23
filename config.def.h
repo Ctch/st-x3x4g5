@@ -5,14 +5,13 @@
  *
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
-static char *font = "MapleMono NF CN:pixelsize=20:antialias=true:autohint=true";
+static char *font = "MapleMono NF CN:pixelsize=22:antialias=true:autohint=true";
 /* Spare fonts */
 static char *font2[] = {
-/*	"Inconsolata for Powerline:pixelsize=12:antialias=true:autohint=true", */
-/*	"Hack Nerd Font Mono:pixelsize=11:antialias=true:autohint=true", */
+	// "MapleMono NF CN:pixelsize=22:antialias=true:autohint=true",
 };
 
-static int borderpx = 10;
+static int borderpx = 12;
 
 /*
  * What program is execed by st depends of these precedence rules:
