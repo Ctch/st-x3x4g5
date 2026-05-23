@@ -11,7 +11,7 @@ static char *font2[] = {
 	// "MapleMono NF CN:pixelsize=22:antialias=true:autohint=true",
 };
 
-static int borderpx = 12;
+static int borderpx = 22;
 
 /*
  * What program is execed by st depends of these precedence rules:
