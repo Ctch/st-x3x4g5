@@ -5,10 +5,11 @@
  *
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
-static char *font = "MapleMono NF CN:pixelsize=22:antialias=true:autohint=true";
+static char *font = "Victor Mono SemiBold:pixelsize=23:antialias=true:autohint=true";
 /* Spare fonts */
 static char *font2[] = {
-	// "MapleMono NF CN:pixelsize=22:antialias=true:autohint=true",
+	"LXGW WenKai:pixelsize=23:antialias=true:autohint=true",
+	"MapleMono NF CN:pixelsize=22:antialias=true:autohint=true",
 };
 
 static int borderpx = 22;
