@@ -2209,7 +2209,12 @@ tcontrolcode(uchar ascii)
 		tputtab(1);
 		return;
 	case '\b':   /* BS */
-		tmoveto(term.c.x-1, term.c.y);
+		if (term.c.x > 0 &&
+			term.line[term.c.y][term.c.x-1].mode & ATTR_WDUMMY) {
+			tmoveto(term.c.x-2, term.c.y);
+		} else {
+			tmoveto(term.c.x-1, term.c.y);
+		}
 		return;
 	case '\r':   /* CR */
 		tmoveto(0, term.c.y);
