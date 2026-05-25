@@ -738,7 +738,7 @@ cresize(int width, int height)
 		win.h = height;
 
 	col = (win.w - 2 * borderpx) / win.cw;
-	row = (win.h - 2 * borderpx) / win.ch;
+	row = (win.h - borderpx) / win.ch;    /* ← 原来是 2 * borderpx，改成 borderpx */
 	col = MAX(1, col);
 	row = MAX(1, row);
 
@@ -1254,7 +1254,8 @@ xinit(int cols, int rows)
 
 	/* adjust fixed window geometry */
 	win.w = 2 * borderpx + cols * win.cw;
-	win.h = 2 * borderpx + rows * win.ch;
+	win.h = borderpx + rows * win.ch;    /* ← 原来是 2 * borderpx，改成 borderpx */
+
 	if (xw.gm & XNegative)
 		xw.l += DisplayWidth(xw.dpy, xw.scr) - win.w - 2;
 	if (xw.gm & YNegative)
