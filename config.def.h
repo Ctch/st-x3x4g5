@@ -5,11 +5,11 @@
  *
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
-static char *font = "Victor Mono SemiBold:pixelsize=20:antialias=true:autohint=true";
+static char *font = "MapleMono NF CN:pixelsize=20:antialias=true:autohint=true";
 /* Spare fonts */
 static char *font2[] = {
 	"LXGW WenKai:pixelsize=20:antialias=true:autohint=true",
-	"MapleMono NF CN:pixelsize=20:antialias=true:autohint=true",
+        "Victor Mono SemiBold:pixelsize=20:antialias=true:autohint=true",
 };
 
 static int borderpx = 16;
@@ -33,7 +33,7 @@ char *vtiden = "\033[?6c";
 
 /* Kerning / character bounding-box multipliers */
 static float cwscale = 1.0;
-static float chscale = 1.2;
+static float chscale = 1.0;
 /* Character rendering offsets in pixels */
 static short cxoffset = 0;
 static short cyoffset = 0;
@@ -103,32 +103,57 @@ char *termname = "st-256color";
 unsigned int tabspaces = 8;
 
 /* Terminal colors (16 first used in escape sequence) */
+// static const char *colorname[] = {
+// 	/* 8 normal colors */
+// 	"#51576D",
+// 	"#E78284",
+// 	"#A6D189",
+// 	"#E5C890",
+// 	"#8CAAEE",
+// 	"#F4B8E4",
+// 	"#81C8BE",
+// 	"#B5BFE2",
+//
+// 	/* 8 bright colors */
+// 	"#626880",
+// 	"#E78284",
+// 	"#A6D189",
+// 	"#E5C890",
+// 	"#8CAAEE",
+// 	"#F4B8E4",
+// 	"#81C8BE",
+// 	"#A5ADCE",
+//
+//         [256] = "#C6D0F5", /* default foreground colour */
+//         [257] = "#303446", /* default background colour */
+//         [258] = "#F2D5CF", /*575268*/
+// };
+
 static const char *colorname[] = {
 	/* 8 normal colors */
-	"#51576D",
-	"#E78284",
-	"#A6D189",
-	"#E5C890",
-	"#8CAAEE",
-	"#F4B8E4",
-	"#81C8BE",
-	"#B5BFE2",
+	"#45475A",  /* Surface1 */
+	"#F38BA8",  /* Red */
+	"#A6E3A1",  /* Green */
+	"#F9E2AF",  /* Yellow */
+	"#89B4FA",  /* Blue */
+	"#F5C2E7",  /* Pink */
+	"#94E2D5",  /* Teal */
+	"#BAC2DE",  /* Subtext1 */
 
 	/* 8 bright colors */
-	"#626880",
-	"#E78284",
-	"#A6D189",
-	"#E5C890",
-	"#8CAAEE",
-	"#F4B8E4",
-	"#81C8BE",
-	"#A5ADCE",
+	"#585B70",  /* Surface2 */
+	"#F38BA8",  /* Red */
+	"#A6E3A1",  /* Green */
+	"#F9E2AF",  /* Yellow */
+	"#89B4FA",  /* Blue */
+	"#F5C2E7",  /* Pink */
+	"#94E2D5",  /* Teal */
+	"#A6ADC8",  /* Subtext0 */
 
-        [256] = "#C6D0F5", /* default foreground colour */
-        [257] = "#303446", /* default background colour */
-        [258] = "#F2D5CF", /*575268*/
+        [256] = "#CDD6F4", /* default foreground colour - Text */
+        [257] = "#1E1E2E", /* default background colour - Base */
+        [258] = "#F5E0DC", /* cursor colour - Rosewater */
 };
-
 
 /*
  * Default colors (colorname index)
