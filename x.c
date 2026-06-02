@@ -223,6 +223,22 @@ static XWindow xw;
 static XSelection xsel;
 static TermWindow win;
 
+enum { CURSORTRAILMAX = 32 };
+
+typedef struct {
+	int x, y;
+	int style;
+	struct timespec ts;
+	int active;
+} CursorTrail;
+
+static CursorTrail ctrail[CURSORTRAILMAX];
+static int ctrailhead;
+static int ctrailx = -1, ctraily = -1, ctrailstyle, ctrailvalid;
+static struct timespec ctraillast;
+
+static void cursortrailclear(void);
+
 /* Font Ring Cache */
 enum {
 	FRC_NORMAL,
@@ -752,6 +768,7 @@ xresize(int col, int row)
 {
 	win.tw = col * win.cw;
 	win.th = row * win.ch;
+	cursortrailclear();
 
 	XFreePixmap(xw.dpy, xw.buf);
 	xw.buf = XCreatePixmap(xw.dpy, xw.win, win.w, win.h,
@@ -1626,19 +1643,251 @@ xdrawglyph(Glyph g, int x, int y)
 	xdrawglyphfontspecs(&spec, g, numspecs, x, y, DRAW_BG | DRAW_FG);
 }
 
+static int
+cursortraillimit(void)
+{
+	return MIN(cursortraillen, CURSORTRAILMAX);
+}
+
+static int
+cursortrailok(void)
+{
+	return cursortrail && cursortraillen && cursortrailtimeout &&
+	       win.cw > 0 && win.ch > 0 && win.tw > 0 && win.th > 0;
+}
+
+static int
+cursortrailcellok(int x, int y)
+{
+	return win.cw > 0 && win.ch > 0 && x >= 0 && y >= 0 &&
+	       x < win.tw / win.cw && y < win.th / win.ch;
+}
+
+static int
+cursortrailage(struct timespec now, struct timespec then)
+{
+	int age = TIMEDIFF(now, then);
+
+	return age < 0 ? 0 : age;
+}
+
+static int
+cursortrailintervalms(void)
+{
+	int interval;
+
+	if (!cursortrailtimeout)
+		return -1;
+
+	interval = cursortrailinterval ? cursortrailinterval : 16;
+	interval = MAX(interval, 1);
+	return MIN(interval, cursortrailtimeout);
+}
+
+static void
+cursortrailclear(void)
+{
+	int i;
+
+	for (i = 0; i < CURSORTRAILMAX; i++)
+		ctrail[i].active = 0;
+	ctrailhead = 0;
+	ctrailvalid = 0;
+	ctrailx = ctraily = -1;
+}
+
+static int
+cursortrailpending(void)
+{
+	int i, limit = cursortraillimit();
+
+	if (!cursortrailok())
+		return 0;
+
+	for (i = 0; i < limit; i++)
+		if (ctrail[i].active)
+			return 1;
+	return 0;
+}
+
+static int
+cursortrailtimeoutleft(struct timespec now)
+{
+	int i, age, interval, left, timeout = -1, limit = cursortraillimit();
+
+	if (!cursortrailok())
+		return -1;
+
+	for (i = 0; i < limit; i++) {
+		if (!ctrail[i].active)
+			continue;
+		age = cursortrailage(now, ctrail[i].ts);
+		left = cursortrailtimeout - age;
+		if (left < 0)
+			left = 0;
+		if (timeout < 0 || left < timeout)
+			timeout = left;
+	}
+
+	if (timeout < 0)
+		return -1;
+	interval = cursortrailintervalms();
+	if (interval < 0)
+		return -1;
+	timeout = MIN(timeout, interval);
+	return MAX(timeout, 0);
+}
+
+static void
+cursortrailadd(int x, int y, int style, struct timespec now)
+{
+	int i, limit = cursortraillimit();
+
+	if (!cursortrailok() || !limit || !cursortrailcellok(x, y))
+		return;
+
+	for (i = 0; i < limit; i++) {
+		if (ctrail[i].active && ctrail[i].x == x && ctrail[i].y == y) {
+			ctrail[i].style = style;
+			ctrail[i].ts = now;
+			return;
+		}
+	}
+
+	ctrail[ctrailhead] = (CursorTrail){ x, y, style, now, 1 };
+	ctrailhead = (ctrailhead + 1) % limit;
+}
+
+static void
+cursortrailtrack(int cx, int cy, struct timespec now)
+{
+	int age;
+
+	if (!cursortrailok() || !cursortrailcellok(cx, cy)) {
+		ctrailvalid = 0;
+		return;
+	}
+
+	if (!ctrailvalid) {
+		ctrailx = cx;
+		ctraily = cy;
+		ctrailstyle = win.cursor;
+		ctraillast = now;
+		ctrailvalid = 1;
+		return;
+	}
+
+	if (cx == ctrailx && cy == ctraily) {
+		ctrailstyle = win.cursor;
+		return;
+	}
+
+	age = cursortrailage(now, ctraillast);
+	if (age >= cursortrailminage)
+		cursortrailadd(ctrailx, ctraily, ctrailstyle, now);
+
+	ctrailx = cx;
+	ctraily = cy;
+	ctrailstyle = win.cursor;
+	ctraillast = now;
+}
+
+static void
+cursortraildrawcell(const CursorTrail *t, Color *col)
+{
+	int x, y, h, w;
+
+	if (!col || !cursortrailcellok(t->x, t->y))
+		return;
+
+	x = borderpx + t->x * win.cw;
+	y = borderpx + t->y * win.ch;
+
+	switch (t->style) {
+	case 3: /* Blinking Underline */
+	case 4: /* Steady Underline */
+		h = cursorthickness > (unsigned int)win.ch ? win.ch : cursorthickness;
+		h = MAX(h, 1);
+		XftDrawRect(xw.draw, col,
+				x, y + win.ch - h,
+				win.cw, h);
+		break;
+	case 5: /* Blinking bar */
+	case 6: /* Steady bar */
+		w = cursorthickness > (unsigned int)win.cw ? win.cw : cursorthickness;
+		w = MAX(w, 1);
+		XftDrawRect(xw.draw, col,
+				x, y,
+				w, win.ch);
+		break;
+	default:
+		XftDrawRect(xw.draw, col,
+				x, y,
+				win.cw, win.ch);
+		break;
+	}
+}
+
+static void
+cursortraildraw(int cx, int cy, struct timespec now)
+{
+	int i, age, color, ci, ncolors = LEN(cursortrailcolors);
+	int limit = cursortraillimit();
+
+	if (!cursortrailok() || !ncolors)
+		return;
+
+	for (i = 0; i < limit; i++) {
+		if (!ctrail[i].active)
+			continue;
+
+		if (!cursortrailcellok(ctrail[i].x, ctrail[i].y)) {
+			ctrail[i].active = 0;
+			continue;
+		}
+
+		age = cursortrailage(now, ctrail[i].ts);
+		if (age >= cursortrailtimeout) {
+			ctrail[i].active = 0;
+			continue;
+		}
+		if ((ctrail[i].x == cx && ctrail[i].y == cy) ||
+		    selected(ctrail[i].x, ctrail[i].y))
+			continue;
+
+		ci = (int)((long long)age * ncolors / cursortrailtimeout);
+		ci = MIN(ci, ncolors - 1);
+		color = cursortrailcolors[ci];
+		if (!BETWEEN(color, 0, dc.collen - 1))
+			color = defaultcs;
+		if (BETWEEN(color, 0, dc.collen - 1))
+			cursortraildrawcell(&ctrail[i], &dc.col[color]);
+	}
+}
+
 void
 xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 {
 	Color drawcol;
 	XRenderColor colbg;
+	struct timespec now;
 
 	/* remove the old cursor */
 	if (selected(ox, oy))
 		og.mode ^= ATTR_REVERSE;
 	xdrawglyph(og, ox, oy);
 
-	if (IS_SET(MODE_HIDE))
+	if (IS_SET(MODE_HIDE)) {
+		cursortrailclear();
 		return;
+	}
+
+	if (cursortrailok() && clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+		cursortrailtrack(cx, cy, now);
+		cursortraildraw(cx, cy, now);
+	} else {
+		cursortrailclear();
+	}
 
 	/*
 	 * Select the right color for the right mode.
@@ -2052,6 +2301,7 @@ run(void)
 	int w = win.w, h = win.h;
 	fd_set rfd;
 	int xfd = XConnectionNumber(xw.dpy), ttyfd, xev, drawing;
+	int traildraw, trailtimeout;
 	struct timespec seltv, *tv, now, lastblink, trigger;
 	double timeout;
 
@@ -2142,8 +2392,23 @@ run(void)
 			}
 		}
 
-		draw();
+		traildraw = cursortrailpending();
+		if (traildraw) {
+			trailtimeout = cursortrailtimeoutleft(now);
+			if (trailtimeout >= 0 &&
+			    (timeout < 0 || trailtimeout < timeout))
+				timeout = trailtimeout;
+		}
+
+		if (traildraw)
+			redraw();
+		else
+			draw();
 		XFlush(xw.dpy);
+
+		trailtimeout = cursortrailtimeoutleft(now);
+		if (trailtimeout >= 0 && (timeout < 0 || trailtimeout < timeout))
+			timeout = trailtimeout;
 		drawing = 0;
 	}
 }
