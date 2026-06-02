@@ -1138,8 +1138,8 @@ csiparse(void)
 	int sep = ';'; /* colon or semi-colon, but not both */
 
 	csiescseq.narg = 0;
-	if (*p == '?') {
-		csiescseq.priv = 1;
+	if (*p == '?' || *p == '>') {
+		csiescseq.priv = *p;
 		p++;
 	}
 
@@ -1375,9 +1375,9 @@ tsetattr(const int *attr, int l)
 			term.c.attr.fg = defaultfg;
 			term.c.attr.bg = defaultbg;
 			break;
-		// case 1: /* font bold */
-		// 	term.c.attr.mode |= ATTR_BOLD;
-		// 	break;
+		case 1: /* font bold */
+			term.c.attr.mode |= ATTR_BOLD;
+			break;
 		case 2:
 			term.c.attr.mode |= ATTR_FAINT;
 			break;
@@ -1508,6 +1508,7 @@ tsetmode(int priv, int set, const int *args, int narg)
 			case 19: /* DECPEX -- Printer extent (IGNORED) */
 			case 42: /* DECNRCM -- National characters (IGNORED) */
 			case 12: /* att610 -- Start blinking cursor (IGNORED) */
+			case 2031: /* modern keyboard protocol mode (IGNORED) */
 				break;
 			case 25: /* DECTCEM -- Text Cursor Enable Mode */
 				xsetmode(!set, MODE_HIDE);
@@ -1783,6 +1784,8 @@ csihandle(void)
 		tsetmode(csiescseq.priv, 1, csiescseq.arg, csiescseq.narg);
 		break;
 	case 'm': /* SGR -- Terminal attribute (color) */
+		if (csiescseq.priv == '>')
+			break;
 		tsetattr(csiescseq.arg, csiescseq.narg);
 		break;
 	case 'n': /* DSR -- Device Status Report */
@@ -1799,6 +1802,10 @@ csihandle(void)
 			goto unknown;
 		}
 		break;
+	case 'q': /* XTVERSION / private cursor extension query (IGNORED) */
+		if (csiescseq.priv == '>')
+			break;
+		goto unknown;
 	case 'r': /* DECSTBM -- Set Scrolling Region */
 		if (csiescseq.priv) {
 			goto unknown;
@@ -1918,6 +1925,9 @@ strhandle(void)
 		case 2:
 			if (narg > 1)
 				xsettitle(strescseq.args[1]);
+			return;
+		case 7:   /* working directory report (IGNORED) */
+		case 133: /* shell integration markers (IGNORED) */
 			return;
 		case 52: /* manipulate selection data */
 			if (narg > 2 && allowwindowops) {

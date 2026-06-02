@@ -232,12 +232,24 @@ typedef struct {
 	int active;
 } CursorTrail;
 
+typedef struct {
+	int active;
+	int fromx, fromy;
+	int tox, toy;
+	struct timespec start;
+	int duration;
+} CursorAnim;
+
 static CursorTrail ctrail[CURSORTRAILMAX];
 static int ctrailhead;
 static int ctrailx = -1, ctraily = -1, ctrailstyle, ctrailvalid;
 static struct timespec ctraillast;
+static CursorAnim canim;
+static int canimx = -1, canimy = -1, canimvalid;
+static struct timespec canimlast;
 
 static void cursortrailclear(void);
+static void cursoranimclear(void);
 
 /* Font Ring Cache */
 enum {
@@ -769,6 +781,7 @@ xresize(int col, int row)
 	win.tw = col * win.cw;
 	win.th = row * win.ch;
 	cursortrailclear();
+	cursoranimclear();
 
 	XFreePixmap(xw.dpy, xw.buf);
 	xw.buf = XCreatePixmap(xw.dpy, xw.win, win.w, win.h,
@@ -1672,6 +1685,130 @@ cursortrailage(struct timespec now, struct timespec then)
 }
 
 static int
+cursoranimok(void)
+{
+	return cursoranim && cursoranimduration > 0 && cursoranimmaxdist >= 0 &&
+	       win.cw > 0 && win.ch > 0 && win.tw > 0 && win.th > 0;
+}
+
+static void
+cursoranimclear(void)
+{
+	canim.active = 0;
+	canimvalid = 0;
+	canimx = canimy = -1;
+}
+
+static int
+cursoranimpending(void)
+{
+	return canim.active && cursoranimok();
+}
+
+static int
+cursoranimtimeoutleft(struct timespec now)
+{
+	int elapsed, left;
+
+	if (!cursoranimpending())
+		return -1;
+
+	elapsed = cursortrailage(now, canim.start);
+	left = canim.duration - elapsed;
+	if (left < 0)
+		left = 0;
+
+	return MIN(left, 16);
+}
+
+static void
+cursoranimtrack(int cx, int cy, struct timespec now)
+{
+	int age, dx, dy, dist;
+
+	if (!cursoranimok() || !cursortrailcellok(cx, cy)) {
+		cursoranimclear();
+		return;
+	}
+
+	if (!canimvalid) {
+		canimx = cx;
+		canimy = cy;
+		canimlast = now;
+		canimvalid = 1;
+		return;
+	}
+
+	if (cx == canimx && cy == canimy)
+		return;
+
+	age = cursortrailage(now, canimlast);
+	dx = cx > canimx ? cx - canimx : canimx - cx;
+	dy = cy > canimy ? cy - canimy : canimy - cy;
+	dist = MAX(dx, dy);
+
+	if (age >= cursoranimminage && dist <= cursoranimmaxdist) {
+		canim = (CursorAnim){
+			.active = 1,
+			.fromx = canimx,
+			.fromy = canimy,
+			.tox = cx,
+			.toy = cy,
+			.start = now,
+			.duration = cursoranimduration,
+		};
+	} else {
+		canim.active = 0;
+	}
+
+	canimx = cx;
+	canimy = cy;
+	canimlast = now;
+}
+
+static int
+cursoranimdraw(int cx, int cy, struct timespec now)
+{
+	int elapsed, fromx, fromy, tox, toy, px, py, color;
+
+	if (!cursoranimpending())
+		return 0;
+	if (cx != canim.tox || cy != canim.toy) {
+		canim.active = 0;
+		return 0;
+	}
+	if (!cursortrailcellok(canim.fromx, canim.fromy) ||
+	    !cursortrailcellok(canim.tox, canim.toy) ||
+	    selected(canim.fromx, canim.fromy) ||
+	    selected(canim.tox, canim.toy)) {
+		canim.active = 0;
+		return 0;
+	}
+
+	elapsed = cursortrailage(now, canim.start);
+	if (elapsed >= canim.duration) {
+		canim.active = 0;
+		return 0;
+	}
+
+	fromx = borderpx + canim.fromx * win.cw;
+	fromy = borderpx + canim.fromy * win.ch;
+	tox = borderpx + canim.tox * win.cw;
+	toy = borderpx + canim.toy * win.ch;
+	px = fromx + (int)((long long)(tox - fromx) * elapsed / canim.duration);
+	py = fromy + (int)((long long)(toy - fromy) * elapsed / canim.duration);
+
+	color = defaultcs;
+	if (!BETWEEN(color, 0, dc.collen - 1))
+		color = defaultfg;
+	if (!BETWEEN(color, 0, dc.collen - 1))
+		return 0;
+
+	XftDrawRect(xw.draw, &dc.col[color], px, py, win.cw, win.ch);
+	return 1;
+}
+
+static int
 cursortrailintervalms(void)
 {
 	int interval;
@@ -1879,14 +2016,22 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 
 	if (IS_SET(MODE_HIDE)) {
 		cursortrailclear();
+		cursoranimclear();
 		return;
 	}
 
-	if (cursortrailok() && clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
-		cursortrailtrack(cx, cy, now);
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+		if (cursortrailok())
+			cursortrailtrack(cx, cy, now);
+		else
+			cursortrailclear();
+		cursoranimtrack(cx, cy, now);
 		cursortraildraw(cx, cy, now);
+		if (cursoranimdraw(cx, cy, now))
+			return;
 	} else {
 		cursortrailclear();
+		cursoranimclear();
 	}
 
 	/*
@@ -2301,7 +2446,7 @@ run(void)
 	int w = win.w, h = win.h;
 	fd_set rfd;
 	int xfd = XConnectionNumber(xw.dpy), ttyfd, xev, drawing;
-	int traildraw, trailtimeout;
+	int animdraw, animtimeout, traildraw, trailtimeout;
 	struct timespec seltv, *tv, now, lastblink, trigger;
 	double timeout;
 
@@ -2399,8 +2544,15 @@ run(void)
 			    (timeout < 0 || trailtimeout < timeout))
 				timeout = trailtimeout;
 		}
+		animdraw = cursoranimpending();
+		if (animdraw) {
+			animtimeout = cursoranimtimeoutleft(now);
+			if (animtimeout >= 0 &&
+			    (timeout < 0 || animtimeout < timeout))
+				timeout = animtimeout;
+		}
 
-		if (traildraw)
+		if (traildraw || animdraw)
 			redraw();
 		else
 			draw();
@@ -2409,6 +2561,9 @@ run(void)
 		trailtimeout = cursortrailtimeoutleft(now);
 		if (trailtimeout >= 0 && (timeout < 0 || trailtimeout < timeout))
 			timeout = trailtimeout;
+		animtimeout = cursoranimtimeoutleft(now);
+		if (animtimeout >= 0 && (timeout < 0 || animtimeout < timeout))
+			timeout = animtimeout;
 		drawing = 0;
 	}
 }

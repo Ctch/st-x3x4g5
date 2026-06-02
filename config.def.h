@@ -204,6 +204,14 @@ static unsigned int cursortrailinterval = 8;
 static unsigned int cursortrailcolors[] = { 259, 260, 261, 262, 263, 264 };
 
 /*
+ * Cursor animation.
+ */
+static int cursoranim = 1;
+static int cursoranimduration = 80;
+static int cursoranimminage = 20;
+static int cursoranimmaxdist = 3;
+
+/*
  * Default columns and rows numbers
  */
 
