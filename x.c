@@ -242,6 +242,14 @@ typedef struct {
 	int duration;
 } CursorAnim;
 
+typedef struct {
+	int lastx, lasty;
+	int active;
+	int visible;
+	struct timespec stillstart;
+	struct timespec lastblink;
+} CursorBlink;
+
 static CursorTrail ctrail[CURSORTRAILMAX];
 static int ctrailhead;
 static int ctrailx = -1, ctraily = -1, ctrailstyle, ctrailvalid;
@@ -250,7 +258,9 @@ static struct timespec ctraillast;
 static CursorAnim canim;
 static int canimx = -1, canimy = -1, canimvalid;
 static struct timespec canimlast;
+static CursorBlink cblink = { .lastx = -1, .lasty = -1, .visible = 1 };
 
+static void cursorblinkclear(void);
 static void cursortrailclear(void);
 static void cursoranimclear(void);
 
@@ -783,6 +793,7 @@ xresize(int col, int row)
 {
 	win.tw = col * win.cw;
 	win.th = row * win.ch;
+	cursorblinkclear();
 	cursortrailclear();
 	cursoranimclear();
 
@@ -1688,6 +1699,105 @@ cursortrailage(struct timespec now, struct timespec then)
 }
 
 static int
+cursorblinkdelayms(void)
+{
+	int delay = cursorblinkdelay;
+
+	LIMIT(delay, 500, 1000);
+	return delay;
+}
+
+static int
+cursorblinkintervalms(void)
+{
+	return MAX(cursorblinkinterval, 2);
+}
+
+static int
+cursorblinkok(void)
+{
+	return cursorblink && cursorblinkinterval > 0;
+}
+
+static void
+cursorblinkclear(void)
+{
+	cblink.lastx = -1;
+	cblink.lasty = -1;
+	cblink.active = 0;
+	cblink.visible = 1;
+	cblink.stillstart = (struct timespec){0};
+	cblink.lastblink = (struct timespec){0};
+}
+
+static void
+cursorblinkreset(int cx, int cy, struct timespec now)
+{
+	cblink.lastx = cx;
+	cblink.lasty = cy;
+	cblink.active = 0;
+	cblink.visible = 1;
+	cblink.stillstart = now;
+	cblink.lastblink = now;
+}
+
+static int
+cursorblinkvisible(int cx, int cy, struct timespec now)
+{
+	int elapsed, phase, visible;
+	int delay = cursorblinkdelayms();
+	int interval = cursorblinkintervalms();
+
+	if (!IS_SET(MODE_FOCUSED) || !cursorblinkok()) {
+		cblink.active = 0;
+		cblink.visible = 1;
+		return 1;
+	}
+
+	if (cblink.lastx != cx || cblink.lasty != cy) {
+		cursorblinkreset(cx, cy, now);
+		return 1;
+	}
+
+	elapsed = cursortrailage(now, cblink.stillstart);
+	if (elapsed < delay) {
+		cblink.active = 0;
+		cblink.visible = 1;
+		return 1;
+	}
+
+	cblink.active = 1;
+	phase = (elapsed - delay) % interval;
+	visible = phase < interval / 2;
+	if (visible != cblink.visible)
+		cblink.lastblink = now;
+	cblink.visible = visible;
+
+	return cblink.visible;
+}
+
+static int
+cursorblinktimeoutleft(struct timespec now)
+{
+	int elapsed, phase, left;
+	int delay = cursorblinkdelayms();
+	int interval = cursorblinkintervalms();
+	int half = interval / 2;
+
+	if (!cursorblinkok() || !IS_SET(MODE_FOCUSED) ||
+	    IS_SET(MODE_HIDE) || cblink.lastx < 0)
+		return -1;
+
+	elapsed = cursortrailage(now, cblink.stillstart);
+	if (elapsed < delay)
+		return delay - elapsed;
+
+	phase = (elapsed - delay) % interval;
+	left = phase < half ? half - phase : interval - phase;
+	return MAX(left, 1);
+}
+
+static int
 glyphbasecolor(uint32_t draw, int fallback, XRenderColor *color)
 {
 	if (IS_TRUECOL(draw)) {
@@ -2138,6 +2248,7 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 	XRenderColor colbg;
 	XRenderColor trailcol;
 	struct timespec now;
+	int haveclock = 0;
 
 	/* remove the old cursor */
 	if (selected(ox, oy))
@@ -2145,12 +2256,14 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 	xdrawglyph(og, ox, oy);
 
 	if (IS_SET(MODE_HIDE)) {
+		cursorblinkclear();
 		cursortrailclear();
 		cursoranimclear();
 		return;
 	}
 
 	if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+		haveclock = 1;
 		if (glyphfgcolor(g, cx, cy, &trailcol)) {
 			if (cursortrailok())
 				cursortrailtrack(cx, cy, trailcol, now);
@@ -2165,9 +2278,13 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 		if (cursoranimdraw(cx, cy, now))
 			return;
 	} else {
+		cursorblinkclear();
 		cursortrailclear();
 		cursoranimclear();
 	}
+
+	if (haveclock && !cursorblinkvisible(cx, cy, now))
+		return;
 
 	/*
 	 * Select the right color for the right mode.
@@ -2437,6 +2554,7 @@ focus(XEvent *ev)
 		if (xw.ime.xic)
 			XSetICFocus(xw.ime.xic);
 		win.mode |= MODE_FOCUSED;
+		cursorblinkclear();
 		xseturgency(0);
 		if (IS_SET(MODE_FOCUS))
 			ttywrite("\033[I", 3, 0);
@@ -2444,6 +2562,7 @@ focus(XEvent *ev)
 		if (xw.ime.xic)
 			XUnsetICFocus(xw.ime.xic);
 		win.mode &= ~MODE_FOCUSED;
+		cursorblinkclear();
 		if (IS_SET(MODE_FOCUS))
 			ttywrite("\033[O", 3, 0);
 	}
@@ -2581,7 +2700,7 @@ run(void)
 	int w = win.w, h = win.h;
 	fd_set rfd;
 	int xfd = XConnectionNumber(xw.dpy), ttyfd, xev, drawing;
-	int animdraw, animtimeout, traildraw, trailtimeout;
+	int animdraw, animtimeout, blinktimeoutleft, traildraw, trailtimeout;
 	struct timespec seltv, *tv, now, lastblink, trigger;
 	double timeout;
 
@@ -2686,6 +2805,10 @@ run(void)
 			    (timeout < 0 || animtimeout < timeout))
 				timeout = animtimeout;
 		}
+		blinktimeoutleft = cursorblinktimeoutleft(now);
+		if (blinktimeoutleft >= 0 &&
+		    (timeout < 0 || blinktimeoutleft < timeout))
+			timeout = blinktimeoutleft;
 
 		if (traildraw || animdraw)
 			redraw();
@@ -2699,6 +2822,10 @@ run(void)
 		animtimeout = cursoranimtimeoutleft(now);
 		if (animtimeout >= 0 && (timeout < 0 || animtimeout < timeout))
 			timeout = animtimeout;
+		blinktimeoutleft = cursorblinktimeoutleft(now);
+		if (blinktimeoutleft >= 0 &&
+		    (timeout < 0 || blinktimeoutleft < timeout))
+			timeout = blinktimeoutleft;
 		drawing = 0;
 	}
 }

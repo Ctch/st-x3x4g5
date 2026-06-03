@@ -187,6 +187,13 @@ static unsigned int defaultrcs = 258;
 static unsigned int cursorshape = 2;
 
 /*
+ * Cursor blink.
+ */
+static int cursorblink = 1;
+static int cursorblinkdelay = 700;
+static int cursorblinkinterval = 600;
+
+/*
  * Cursor trail.
  * The trail fades from the current glyph foreground to defaultbg as it ages.
  */
