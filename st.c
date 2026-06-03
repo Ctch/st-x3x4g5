@@ -228,6 +228,7 @@ static STREscape strescseq;
 static int iofd = 1;
 static int cmdfd;
 static pid_t pid;
+int disableda = 0;
 
 static const uchar utfbyte[UTF_SIZ + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
 static const uchar utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
@@ -1718,6 +1719,8 @@ csihandle(void)
 		}
 		break;
 	case 'c': /* DA -- Device Attributes */
+		if (csiescseq.arg[0] == 0 && disableda)
+			return;
 		if (csiescseq.arg[0] == 0)
 			ttywrite(vtiden, strlen(vtiden), 0);
 		break;

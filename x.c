@@ -2911,10 +2911,12 @@ usage(void)
 	die("usage: %s [-aiv] [-c class] [-f font] [-g geometry]"
 	    " [-n name] [-o file]\n"
 	    "          [-T title] [-t title] [-w windowid]"
+	    " [--disabled-da]"
 	    " [[-e] command [args ...]]\n"
 	    "       %s [-aiv] [-c class] [-f font] [-g geometry]"
 	    " [-n name] [-o file]\n"
-	    "          [-T title] [-t title] [-w windowid] -l line"
+	    "          [-T title] [-t title] [-w windowid]"
+	    " [--disabled-da] -l line"
 	    " [stty_args ...]\n", argv0, argv0);
 }
 
@@ -2928,6 +2930,14 @@ main(int argc, char *argv[])
 	ARGBEGIN {
 	case 'a':
 		allowaltscreen = 0;
+		break;
+	case '-':
+		if (!strcmp(argv[0], "--disabled-da")) {
+			disableda = 1;
+			brk_ = 1;
+			break;
+		}
+		usage();
 		break;
 	case 'c':
 		opt_class = EARGF(usage());
