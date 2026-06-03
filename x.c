@@ -228,6 +228,7 @@ enum { CURSORTRAILMAX = 32 };
 typedef struct {
 	int x, y;
 	int style;
+	XRenderColor color;
 	struct timespec ts;
 	int active;
 } CursorTrail;
@@ -236,6 +237,7 @@ typedef struct {
 	int active;
 	int fromx, fromy;
 	int tox, toy;
+	XRenderColor color;
 	struct timespec start;
 	int duration;
 } CursorAnim;
@@ -243,6 +245,7 @@ typedef struct {
 static CursorTrail ctrail[CURSORTRAILMAX];
 static int ctrailhead;
 static int ctrailx = -1, ctraily = -1, ctrailstyle, ctrailvalid;
+static XRenderColor ctrailcolor;
 static struct timespec ctraillast;
 static CursorAnim canim;
 static int canimx = -1, canimy = -1, canimvalid;
@@ -1685,6 +1688,102 @@ cursortrailage(struct timespec now, struct timespec then)
 }
 
 static int
+glyphbasecolor(uint32_t draw, int fallback, XRenderColor *color)
+{
+	if (IS_TRUECOL(draw)) {
+		color->red = TRUERED(draw);
+		color->green = TRUEGREEN(draw);
+		color->blue = TRUEBLUE(draw);
+		color->alpha = 0xffff;
+		return 1;
+	}
+
+	if (!BETWEEN(draw, 0, dc.collen - 1))
+		draw = fallback;
+	if (!BETWEEN(draw, 0, dc.collen - 1))
+		return 0;
+
+	*color = dc.col[draw].color;
+	return 1;
+}
+
+static void
+invertcolor(XRenderColor *color)
+{
+	color->red = ~color->red;
+	color->green = ~color->green;
+	color->blue = ~color->blue;
+}
+
+static int
+glyphfgcolor(Glyph g, int cx, int cy, XRenderColor *color)
+{
+	int fgidx = -1, bgidx = -1;
+	XRenderColor fg, bg, tmp;
+
+	if (selected(cx, cy))
+		g.mode ^= ATTR_REVERSE;
+
+	g.mode &= ATTR_BOLD|ATTR_FAINT|ATTR_ITALIC|ATTR_BLINK|ATTR_REVERSE|
+	          ATTR_INVISIBLE|ATTR_UNDERLINE|ATTR_STRUCK|ATTR_WIDE|ATTR_BOXDRAW;
+
+	if (g.mode & ATTR_ITALIC && g.mode & ATTR_BOLD) {
+		if (dc.ibfont.badslant || dc.ibfont.badweight)
+			g.fg = defaultattr;
+	} else if ((g.mode & ATTR_ITALIC && dc.ifont.badslant) ||
+	           (g.mode & ATTR_BOLD && dc.bfont.badweight)) {
+		g.fg = defaultattr;
+	}
+
+	if (!IS_TRUECOL(g.fg))
+		fgidx = g.fg;
+	if (!IS_TRUECOL(g.bg))
+		bgidx = g.bg;
+
+	if ((g.mode & ATTR_BOLD_FAINT) == ATTR_BOLD && BETWEEN(fgidx, 0, 7))
+		fgidx += 8;
+
+	if (!glyphbasecolor(fgidx >= 0 ? fgidx : g.fg, defaultfg, &fg) ||
+	    !glyphbasecolor(bgidx >= 0 ? bgidx : g.bg, defaultbg, &bg))
+		return 0;
+
+	if (IS_SET(MODE_REVERSE)) {
+		if (fgidx == defaultfg) {
+			if (!glyphbasecolor(defaultbg, defaultbg, &fg))
+				return 0;
+		} else {
+			invertcolor(&fg);
+		}
+
+		if (bgidx == defaultbg) {
+			if (!glyphbasecolor(defaultfg, defaultfg, &bg))
+				return 0;
+		} else {
+			invertcolor(&bg);
+		}
+	}
+
+	if ((g.mode & ATTR_BOLD_FAINT) == ATTR_FAINT) {
+		fg.red /= 2;
+		fg.green /= 2;
+		fg.blue /= 2;
+	}
+
+	if (g.mode & ATTR_REVERSE) {
+		tmp = fg;
+		fg = bg;
+		bg = tmp;
+	}
+
+	if ((g.mode & ATTR_BLINK && win.mode & MODE_BLINK) ||
+	    (g.mode & ATTR_INVISIBLE))
+		fg = bg;
+
+	*color = fg;
+	return 1;
+}
+
+static int
 cursoranimok(void)
 {
 	return cursoranim && cursoranimduration > 0 && cursoranimmaxdist >= 0 &&
@@ -1722,7 +1821,7 @@ cursoranimtimeoutleft(struct timespec now)
 }
 
 static void
-cursoranimtrack(int cx, int cy, struct timespec now)
+cursoranimtrack(int cx, int cy, XRenderColor color, struct timespec now)
 {
 	int age, dx, dy, dist;
 
@@ -1754,6 +1853,7 @@ cursoranimtrack(int cx, int cy, struct timespec now)
 			.fromy = canimy,
 			.tox = cx,
 			.toy = cy,
+			.color = color,
 			.start = now,
 			.duration = cursoranimduration,
 		};
@@ -1769,7 +1869,8 @@ cursoranimtrack(int cx, int cy, struct timespec now)
 static int
 cursoranimdraw(int cx, int cy, struct timespec now)
 {
-	int elapsed, fromx, fromy, tox, toy, px, py, color;
+	int elapsed, fromx, fromy, tox, toy, px, py;
+	Color color;
 
 	if (!cursoranimpending())
 		return 0;
@@ -1798,13 +1899,11 @@ cursoranimdraw(int cx, int cy, struct timespec now)
 	px = fromx + (int)((long long)(tox - fromx) * elapsed / canim.duration);
 	py = fromy + (int)((long long)(toy - fromy) * elapsed / canim.duration);
 
-	color = defaultcs;
-	if (!BETWEEN(color, 0, dc.collen - 1))
-		color = defaultfg;
-	if (!BETWEEN(color, 0, dc.collen - 1))
+	if (!XftColorAllocValue(xw.dpy, xw.vis, xw.cmap, &canim.color, &color))
 		return 0;
 
-	XftDrawRect(xw.draw, &dc.col[color], px, py, win.cw, win.ch);
+	XftDrawRect(xw.draw, &color, px, py, win.cw, win.ch);
+	XftColorFree(xw.dpy, xw.vis, xw.cmap, &color);
 	return 1;
 }
 
@@ -1876,7 +1975,7 @@ cursortrailtimeoutleft(struct timespec now)
 }
 
 static void
-cursortrailadd(int x, int y, int style, struct timespec now)
+cursortrailadd(int x, int y, int style, XRenderColor color, struct timespec now)
 {
 	int i, limit = cursortraillimit();
 
@@ -1886,17 +1985,18 @@ cursortrailadd(int x, int y, int style, struct timespec now)
 	for (i = 0; i < limit; i++) {
 		if (ctrail[i].active && ctrail[i].x == x && ctrail[i].y == y) {
 			ctrail[i].style = style;
+			ctrail[i].color = color;
 			ctrail[i].ts = now;
 			return;
 		}
 	}
 
-	ctrail[ctrailhead] = (CursorTrail){ x, y, style, now, 1 };
+	ctrail[ctrailhead] = (CursorTrail){ x, y, style, color, now, 1 };
 	ctrailhead = (ctrailhead + 1) % limit;
 }
 
 static void
-cursortrailtrack(int cx, int cy, struct timespec now)
+cursortrailtrack(int cx, int cy, XRenderColor color, struct timespec now)
 {
 	int age;
 
@@ -1909,6 +2009,7 @@ cursortrailtrack(int cx, int cy, struct timespec now)
 		ctrailx = cx;
 		ctraily = cy;
 		ctrailstyle = win.cursor;
+		ctrailcolor = color;
 		ctraillast = now;
 		ctrailvalid = 1;
 		return;
@@ -1916,16 +2017,18 @@ cursortrailtrack(int cx, int cy, struct timespec now)
 
 	if (cx == ctrailx && cy == ctraily) {
 		ctrailstyle = win.cursor;
+		ctrailcolor = color;
 		return;
 	}
 
 	age = cursortrailage(now, ctraillast);
 	if (age >= cursortrailminage)
-		cursortrailadd(ctrailx, ctraily, ctrailstyle, now);
+		cursortrailadd(ctrailx, ctraily, ctrailstyle, ctrailcolor, now);
 
 	ctrailx = cx;
 	ctraily = cy;
 	ctrailstyle = win.cursor;
+	ctrailcolor = color;
 	ctraillast = now;
 }
 
@@ -1965,13 +2068,42 @@ cursortraildrawcell(const CursorTrail *t, Color *col)
 	}
 }
 
+static int
+cursortrailcolor(const CursorTrail *t, int age, Color *col)
+{
+	int bg = defaultbg;
+	XRenderColor color;
+
+	if (!BETWEEN(bg, 0, dc.collen - 1))
+		return 0;
+
+	age = MAX(age, 0);
+	age = MIN(age, cursortrailtimeout);
+
+	color.red = t->color.red +
+		((long)dc.col[bg].color.red - t->color.red) *
+		age / cursortrailtimeout;
+	color.green = t->color.green +
+		((long)dc.col[bg].color.green - t->color.green) *
+		age / cursortrailtimeout;
+	color.blue = t->color.blue +
+		((long)dc.col[bg].color.blue - t->color.blue) *
+		age / cursortrailtimeout;
+	color.alpha = t->color.alpha +
+		((long)dc.col[bg].color.alpha - t->color.alpha) *
+		age / cursortrailtimeout;
+
+	return XftColorAllocValue(xw.dpy, xw.vis, xw.cmap, &color, col);
+}
+
 static void
 cursortraildraw(int cx, int cy, struct timespec now)
 {
-	int i, age, color, ci, ncolors = LEN(cursortrailcolors);
+	int i, age;
 	int limit = cursortraillimit();
+	Color col;
 
-	if (!cursortrailok() || !ncolors)
+	if (!cursortrailok())
 		return;
 
 	for (i = 0; i < limit; i++) {
@@ -1992,13 +2124,10 @@ cursortraildraw(int cx, int cy, struct timespec now)
 		    selected(ctrail[i].x, ctrail[i].y))
 			continue;
 
-		ci = (int)((long long)age * ncolors / cursortrailtimeout);
-		ci = MIN(ci, ncolors - 1);
-		color = cursortrailcolors[ci];
-		if (!BETWEEN(color, 0, dc.collen - 1))
-			color = defaultcs;
-		if (BETWEEN(color, 0, dc.collen - 1))
-			cursortraildrawcell(&ctrail[i], &dc.col[color]);
+		if (cursortrailcolor(&ctrail[i], age, &col)) {
+			cursortraildrawcell(&ctrail[i], &col);
+			XftColorFree(xw.dpy, xw.vis, xw.cmap, &col);
+		}
 	}
 }
 
@@ -2007,6 +2136,7 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 {
 	Color drawcol;
 	XRenderColor colbg;
+	XRenderColor trailcol;
 	struct timespec now;
 
 	/* remove the old cursor */
@@ -2021,11 +2151,16 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 	}
 
 	if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
-		if (cursortrailok())
-			cursortrailtrack(cx, cy, now);
-		else
+		if (glyphfgcolor(g, cx, cy, &trailcol)) {
+			if (cursortrailok())
+				cursortrailtrack(cx, cy, trailcol, now);
+			else
+				cursortrailclear();
+			cursoranimtrack(cx, cy, trailcol, now);
+		} else {
 			cursortrailclear();
-		cursoranimtrack(cx, cy, now);
+			cursoranimclear();
+		}
 		cursortraildraw(cx, cy, now);
 		if (cursoranimdraw(cx, cy, now))
 			return;

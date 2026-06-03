@@ -166,12 +166,6 @@ static const char *colorname[] = {
         [256] = "#CDD6F4", /* default foreground colour - Text */
         [257] = "#1E1E2E", /* default background colour - Base */
         [258] = "#F5E0DC", /* cursor colour - Rosewater */
-        [259] = "#FFF1F2", /* cursor trail 1 */
-        [260] = "#EBDDE7", /* cursor trail 2 */
-        [261] = "#CFC6DB", /* cursor trail 3 */
-        [262] = "#AAA6C3", /* cursor trail 4 */
-        [263] = "#7F849C", /* cursor trail 5 */
-        [264] = "#585B70", /* cursor trail 6 */
 };
 
 /*
@@ -194,14 +188,13 @@ static unsigned int cursorshape = 2;
 
 /*
  * Cursor trail.
- * The colors are opaque colorname[] indexes, from newest to oldest.
+ * The trail fades from the current glyph foreground to defaultbg as it ages.
  */
 static unsigned int cursortrail = 1;
-static unsigned int cursortraillen = 4;
-static unsigned int cursortrailtimeout = 80;
+static unsigned int cursortraillen = 3;
+static unsigned int cursortrailtimeout = 50;
 static unsigned int cursortrailminage = 8;
-static unsigned int cursortrailinterval = 8;
-static unsigned int cursortrailcolors[] = { 259, 260, 261, 262, 263, 264 };
+static unsigned int cursortrailinterval = 4;
 
 /*
  * Cursor animation.
