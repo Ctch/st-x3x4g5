@@ -1084,15 +1084,17 @@ xloadfonts(const char *fontstr, double fontsize)
 	if (xloadfont(&dc.ifont, pattern))
 		die("can't open font %s\n", fontstr);
 
-	FcPatternDel(pattern, FC_WEIGHT);
-	FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);
-	if (xloadfont(&dc.ibfont, pattern))
-		die("can't open font %s\n", fontstr);
+	if (!disableboldfont) {
+		FcPatternDel(pattern, FC_WEIGHT);
+		FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);
+		if (xloadfont(&dc.ibfont, pattern))
+			die("can't open font %s\n", fontstr);
 
-	FcPatternDel(pattern, FC_SLANT);
-	FcPatternAddInteger(pattern, FC_SLANT, FC_SLANT_ROMAN);
-	if (xloadfont(&dc.bfont, pattern))
-		die("can't open font %s\n", fontstr);
+		FcPatternDel(pattern, FC_SLANT);
+		FcPatternAddInteger(pattern, FC_SLANT, FC_SLANT_ROMAN);
+		if (xloadfont(&dc.bfont, pattern))
+			die("can't open font %s\n", fontstr);
+	}
 
 	FcPatternDestroy(pattern);
 }
@@ -1178,15 +1180,17 @@ xloadsparefonts(void)
 		if (xloadsparefont(pattern, FRC_ITALIC))
 			die("can't open spare font %s\n", *fp);
 
-		FcPatternDel(pattern, FC_WEIGHT);
-		FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);
-		if (xloadsparefont(pattern, FRC_ITALICBOLD))
-			die("can't open spare font %s\n", *fp);
+		if (!disableboldfont) {
+			FcPatternDel(pattern, FC_WEIGHT);
+			FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);
+			if (xloadsparefont(pattern, FRC_ITALICBOLD))
+				die("can't open spare font %s\n", *fp);
 
-		FcPatternDel(pattern, FC_SLANT);
-		FcPatternAddInteger(pattern, FC_SLANT, FC_SLANT_ROMAN);
-		if (xloadsparefont(pattern, FRC_BOLD))
-			die("can't open spare font %s\n", *fp);
+			FcPatternDel(pattern, FC_SLANT);
+			FcPatternAddInteger(pattern, FC_SLANT, FC_SLANT_ROMAN);
+			if (xloadsparefont(pattern, FRC_BOLD))
+				die("can't open spare font %s\n", *fp);
+		}
 
 		FcPatternDestroy(pattern);
 	}
@@ -1209,9 +1213,11 @@ xunloadfonts(void)
 		XftFontClose(xw.dpy, frc[--frclen].font);
 
 	xunloadfont(&dc.font);
-	xunloadfont(&dc.bfont);
 	xunloadfont(&dc.ifont);
-	xunloadfont(&dc.ibfont);
+	if (!disableboldfont) {
+		xunloadfont(&dc.bfont);
+		xunloadfont(&dc.ibfont);
+	}
 }
 
 int
@@ -1421,13 +1427,17 @@ xmakeglyphfontspecs(XftGlyphFontSpec *specs, const Glyph *glyphs, int len, int x
 			font = &dc.font;
 			frcflags = FRC_NORMAL;
 			runewidth = win.cw * ((mode & ATTR_WIDE) ? 2.0f : 1.0f);
-			if ((mode & ATTR_ITALIC) && (mode & ATTR_BOLD)) {
+			if (disableboldfont && (mode & ATTR_ITALIC)) {
+				font = &dc.ifont;
+				frcflags = FRC_ITALIC;
+			} else if (!disableboldfont && (mode & ATTR_ITALIC) &&
+			    (mode & ATTR_BOLD)) {
 				font = &dc.ibfont;
 				frcflags = FRC_ITALICBOLD;
 			} else if (mode & ATTR_ITALIC) {
 				font = &dc.ifont;
 				frcflags = FRC_ITALIC;
-			} else if (mode & ATTR_BOLD) {
+			} else if (!disableboldfont && (mode & ATTR_BOLD)) {
 				font = &dc.bfont;
 				frcflags = FRC_BOLD;
 			}
@@ -1538,7 +1548,10 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 	XRectangle r;
 
 	/* Fallback on color display for attributes not supported by the font */
-	if (base.mode & ATTR_ITALIC && base.mode & ATTR_BOLD) {
+	if (disableboldfont) {
+		if ((base.mode & ATTR_ITALIC) && dc.ifont.badslant)
+			base.fg = defaultattr;
+	} else if (base.mode & ATTR_ITALIC && base.mode & ATTR_BOLD) {
 		if (dc.ibfont.badslant || dc.ibfont.badweight)
 			base.fg = defaultattr;
 	} else if ((base.mode & ATTR_ITALIC && dc.ifont.badslant) ||
@@ -1649,8 +1662,13 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 
         /* Render underline and strikethrough. */
         if (base.mode & ATTR_UNDERLINE) {
-            XftDrawRect(xw.draw, fg, winx, winy + dc.font.ascent + 1,
-                        width, 1);
+            int thick = MAX(underlinethickness, 1);
+            int uy;
+
+            thick = MIN(thick, win.ch);
+            uy = winy + dc.font.ascent + 1 + underlineoffset;
+            LIMIT(uy, winy, winy + win.ch - thick);
+            XftDrawRect(xw.draw, fg, winx, uy, width, thick);
         }
 
         if (base.mode & ATTR_STRUCK) {
@@ -1837,7 +1855,10 @@ glyphfgcolor(Glyph g, int cx, int cy, XRenderColor *color)
 	g.mode &= ATTR_BOLD|ATTR_FAINT|ATTR_ITALIC|ATTR_BLINK|ATTR_REVERSE|
 	          ATTR_INVISIBLE|ATTR_UNDERLINE|ATTR_STRUCK|ATTR_WIDE|ATTR_BOXDRAW;
 
-	if (g.mode & ATTR_ITALIC && g.mode & ATTR_BOLD) {
+	if (disableboldfont) {
+		if ((g.mode & ATTR_ITALIC) && dc.ifont.badslant)
+			g.fg = defaultattr;
+	} else if (g.mode & ATTR_ITALIC && g.mode & ATTR_BOLD) {
 		if (dc.ibfont.badslant || dc.ibfont.badweight)
 			g.fg = defaultattr;
 	} else if ((g.mode & ATTR_ITALIC && dc.ifont.badslant) ||

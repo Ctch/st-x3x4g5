@@ -38,6 +38,13 @@ static float chscale = 1.15;
 static short cxoffset = 0;
 static short cyoffset = 0;
 
+/* Keep ATTR_BOLD color semantics, but do not switch to bold fonts. */
+static int disableboldfont = 1;
+
+/* Text underline rendering. Positive offset moves the line lower. */
+static int underlineoffset = 4;
+static int underlinethickness = 2;
+
 /*
  * word delimiter string
  *
