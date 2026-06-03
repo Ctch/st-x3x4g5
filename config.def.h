@@ -12,7 +12,10 @@ static char *font2[] = {
 	"LXGW WenKai:pixelsize=21:antialias=true:autohint=true",
 };
 
-static int borderpx = 16;
+static int borderpx_left = 16;
+static int borderpx_top = 16;
+static int borderpx_right = 16;
+static int borderpx_down = 16;
 
 /*
  * What program is execed by st depends of these precedence rules:

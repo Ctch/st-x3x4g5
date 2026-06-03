@@ -375,7 +375,7 @@ ttysend(const Arg *arg)
 int
 evcol(XEvent *e)
 {
-	int x = e->xbutton.x - borderpx;
+	int x = e->xbutton.x - borderpx_left;
 	LIMIT(x, 0, win.tw - 1);
 	return x / win.cw;
 }
@@ -383,7 +383,7 @@ evcol(XEvent *e)
 int
 evrow(XEvent *e)
 {
-	int y = e->xbutton.y - borderpx;
+	int y = e->xbutton.y - borderpx_top;
 	LIMIT(y, 0, win.th - 1);
 	return y / win.ch;
 }
@@ -778,8 +778,8 @@ cresize(int width, int height)
 	if (height != 0)
 		win.h = height;
 
-	col = (win.w - 2 * borderpx) / win.cw;
-	row = (win.h - borderpx) / win.ch;    /* ← 原来是 2 * borderpx，改成 borderpx */
+	col = (win.w - borderpx_left - borderpx_right) / win.cw;
+	row = (win.h - borderpx_top - borderpx_down) / win.ch;
 	col = MAX(1, col);
 	row = MAX(1, row);
 
@@ -918,10 +918,10 @@ xhints(void)
 	sizeh->width = win.w;
 	sizeh->height_inc = 1;
 	sizeh->width_inc = 1;
-	sizeh->base_height = 2 * borderpx;
-	sizeh->base_width = 2 * borderpx;
-	sizeh->min_height = win.ch + 2 * borderpx;
-	sizeh->min_width = win.cw + 2 * borderpx;
+	sizeh->base_height = borderpx_top + borderpx_down;
+	sizeh->base_width = borderpx_left + borderpx_right;
+	sizeh->min_height = win.ch + borderpx_top + borderpx_down;
+	sizeh->min_width = win.cw + borderpx_left + borderpx_right;
 	if (xw.isfixed) {
 		sizeh->flags |= PMaxSize;
 		sizeh->min_width = sizeh->max_width = win.w;
@@ -1303,8 +1303,8 @@ xinit(int cols, int rows)
 	xloadcols();
 
 	/* adjust fixed window geometry */
-	win.w = 2 * borderpx + cols * win.cw;
-	win.h = borderpx + rows * win.ch;    /* ← 原来是 2 * borderpx，改成 borderpx */
+	win.w = borderpx_left + borderpx_right + cols * win.cw;
+	win.h = borderpx_top + borderpx_down + rows * win.ch;
 
 	if (xw.gm & XNegative)
 		xw.l += DisplayWidth(xw.dpy, xw.scr) - win.w - 2;
@@ -1399,7 +1399,7 @@ xinit(int cols, int rows)
 int
 xmakeglyphfontspecs(XftGlyphFontSpec *specs, const Glyph *glyphs, int len, int x, int y)
 {
-	float winx = borderpx + x * win.cw, winy = borderpx + y * win.ch, xp, yp;
+	float winx = borderpx_left + x * win.cw, winy = borderpx_top + y * win.ch, xp, yp;
 	ushort mode, prevmode = USHRT_MAX;
 	Font *font = &dc.font;
 	int frcflags = FRC_NORMAL;
@@ -1541,7 +1541,7 @@ void
 xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, int y, int dmode)
 {
 	int charlen = len * ((base.mode & ATTR_WIDE) ? 2 : 1);
-	int winx = borderpx + x * win.cw, winy = borderpx + y * win.ch,
+	int winx = borderpx_left + x * win.cw, winy = borderpx_top + y * win.ch,
 	    width = charlen * win.cw;
 	Color *fg, *bg, *temp, revfg, revbg, truefg, truebg;
 	XRenderColor colfg, colbg;
@@ -1635,17 +1635,17 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
     if (dmode & DRAW_BG) {
         /* Intelligent cleaning up of the borders. */
         if (x == 0) {
-            xclear(0, (y == 0)? 0 : winy, borderpx,
+            xclear(0, (y == 0)? 0 : winy, borderpx_left,
                    winy + win.ch +
-                   ((winy + win.ch >= borderpx + win.th)? win.h : 0));
+                   ((winy + win.ch >= borderpx_top + win.th)? win.h : 0));
         }
-        if (winx + width >= borderpx + win.tw) {
+        if (winx + width >= borderpx_left + win.tw) {
             xclear(winx + width, (y == 0)? 0 : winy, win.w,
-                   ((winy + win.ch >= borderpx + win.th)? win.h : (winy + win.ch)));
+                   ((winy + win.ch >= borderpx_top + win.th)? win.h : (winy + win.ch)));
         }
         if (y == 0)
-            xclear(winx, 0, winx + width, borderpx);
-        if (winy + win.ch >= borderpx + win.th)
+            xclear(winx, 0, winx + width, borderpx_top);
+        if (winy + win.ch >= borderpx_top + win.th)
             xclear(winx, winy + win.ch, winx + width, win.h);
         /* Fill the background */
         XftDrawRect(xw.draw, bg, winx, winy, width, win.ch);
@@ -2023,10 +2023,10 @@ cursoranimdraw(int cx, int cy, struct timespec now)
 		return 0;
 	}
 
-	fromx = borderpx + canim.fromx * win.cw;
-	fromy = borderpx + canim.fromy * win.ch;
-	tox = borderpx + canim.tox * win.cw;
-	toy = borderpx + canim.toy * win.ch;
+	fromx = borderpx_left + canim.fromx * win.cw;
+	fromy = borderpx_top + canim.fromy * win.ch;
+	tox = borderpx_left + canim.tox * win.cw;
+	toy = borderpx_top + canim.toy * win.ch;
 	px = fromx + (int)((long long)(tox - fromx) * elapsed / canim.duration);
 	py = fromy + (int)((long long)(toy - fromy) * elapsed / canim.duration);
 
@@ -2171,8 +2171,8 @@ cursortraildrawcell(const CursorTrail *t, Color *col)
 	if (!col || !cursortrailcellok(t->x, t->y))
 		return;
 
-	x = borderpx + t->x * win.cw;
-	y = borderpx + t->y * win.ch;
+	x = borderpx_left + t->x * win.cw;
+	y = borderpx_top + t->y * win.ch;
 
 	switch (t->style) {
 	case 3: /* Blinking Underline */
@@ -2357,35 +2357,35 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 		case 3: /* Blinking Underline */
 		case 4: /* Steady Underline */
 			XftDrawRect(xw.draw, &drawcol,
-					borderpx + cx * win.cw,
-					borderpx + (cy + 1) * win.ch - \
+					borderpx_left + cx * win.cw,
+					borderpx_top + (cy + 1) * win.ch - \
 						cursorthickness,
 					win.cw, cursorthickness);
 			break;
 		case 5: /* Blinking bar */
 		case 6: /* Steady bar */
 			XftDrawRect(xw.draw, &drawcol,
-					borderpx + cx * win.cw,
-					borderpx + cy * win.ch,
+					borderpx_left + cx * win.cw,
+					borderpx_top + cy * win.ch,
 					cursorthickness, win.ch);
 			break;
 		}
 	} else {
 		XftDrawRect(xw.draw, &drawcol,
-				borderpx + cx * win.cw,
-				borderpx + cy * win.ch,
+				borderpx_left + cx * win.cw,
+				borderpx_top + cy * win.ch,
 				win.cw - 1, 1);
 		XftDrawRect(xw.draw, &drawcol,
-				borderpx + cx * win.cw,
-				borderpx + cy * win.ch,
+				borderpx_left + cx * win.cw,
+				borderpx_top + cy * win.ch,
 				1, win.ch - 1);
 		XftDrawRect(xw.draw, &drawcol,
-				borderpx + (cx + 1) * win.cw - 1,
-				borderpx + cy * win.ch,
+				borderpx_left + (cx + 1) * win.cw - 1,
+				borderpx_top + cy * win.ch,
 				1, win.ch - 1);
 		XftDrawRect(xw.draw, &drawcol,
-				borderpx + cx * win.cw,
-				borderpx + (cy + 1) * win.ch - 1,
+				borderpx_left + cx * win.cw,
+				borderpx_top + (cy + 1) * win.ch - 1,
 				win.cw, 1);
 	}
 }
@@ -2493,8 +2493,8 @@ xximspot(int x, int y)
 	if (xw.ime.xic == NULL)
 		return;
 
-	xw.ime.spot.x = borderpx + x * win.cw;
-	xw.ime.spot.y = borderpx + (y + 1) * win.ch;
+	xw.ime.spot.x = borderpx_left + x * win.cw;
+	xw.ime.spot.y = borderpx_top + (y + 1) * win.ch;
 
 	XSetICValues(xw.ime.xic, XNPreeditAttributes, xw.ime.spotlist, NULL);
 }
