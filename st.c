@@ -173,6 +173,7 @@ static void tdumpsel(void);
 static void tdumpline(int);
 static void tdump(void);
 static void tclearregion(int, int, int, int);
+static void tclearwide(int, int);
 static void tcursor(int);
 static void tdeletechar(int);
 static void tdeleteline(int);
@@ -190,6 +191,7 @@ static void tscrolldown(int, int);
 static void tsetattr(const int *, int);
 static void tsetchar(Rune, const Glyph *, int, int);
 static void tsetdirt(int, int);
+static void trepairwide(int);
 static void tsetscroll(int, int);
 static void tswapscreen(void);
 static void tsetmode(int, int, const int *, int);
@@ -1188,6 +1190,56 @@ tmoveto(int x, int y)
 }
 
 void
+tclearwide(int x, int y)
+{
+	Glyph *gp;
+
+	if (!BETWEEN(x, 0, term.col-1) || !BETWEEN(y, 0, term.row-1))
+		return;
+
+	gp = &term.line[y][x];
+	if (gp->mode & ATTR_WIDE) {
+		gp->u = ' ';
+		gp->mode &= ~ATTR_WIDE;
+		if (x+1 < term.col) {
+			gp[1].u = ' ';
+			gp[1].mode &= ~ATTR_WDUMMY;
+		}
+	} else if ((gp->mode & ATTR_WDUMMY) && x > 0) {
+		gp->u = ' ';
+		gp->mode &= ~ATTR_WDUMMY;
+		gp[-1].u = ' ';
+		gp[-1].mode &= ~ATTR_WIDE;
+	}
+}
+
+void
+trepairwide(int y)
+{
+	Glyph *line;
+	int x;
+
+	if (!BETWEEN(y, 0, term.row-1))
+		return;
+
+	line = term.line[y];
+	for (x = 0; x < term.col; x++) {
+		if (line[x].mode & ATTR_WIDE) {
+			if (x+1 < term.col && (line[x+1].mode & ATTR_WDUMMY)) {
+				x++;
+			} else {
+				line[x].u = ' ';
+				line[x].mode &= ~ATTR_WIDE;
+			}
+		} else if (line[x].mode & ATTR_WDUMMY) {
+			line[x].u = ' ';
+			line[x].mode &= ~ATTR_WDUMMY;
+		}
+	}
+	term.dirty[y] = 1;
+}
+
+void
 tsetchar(Rune u, const Glyph *attr, int x, int y)
 {
 	static const char *vt100_0[62] = { /* 0x41 - 0x7e */
@@ -1208,15 +1260,7 @@ tsetchar(Rune u, const Glyph *attr, int x, int y)
 	   BETWEEN(u, 0x41, 0x7e) && vt100_0[u - 0x41])
 		utf8decode(vt100_0[u - 0x41], &u, UTF_SIZ);
 
-	if (term.line[y][x].mode & ATTR_WIDE) {
-		if (x+1 < term.col) {
-			term.line[y][x+1].u = ' ';
-			term.line[y][x+1].mode &= ~ATTR_WDUMMY;
-		}
-	} else if (term.line[y][x].mode & ATTR_WDUMMY) {
-		term.line[y][x-1].u = ' ';
-		term.line[y][x-1].mode &= ~ATTR_WIDE;
-	}
+	tclearwide(x, y);
 
 	term.dirty[y] = 1;
 	term.line[y][x] = *attr;
@@ -1243,6 +1287,16 @@ tclearregion(int x1, int y1, int x2, int y2)
 	LIMIT(y2, 0, term.row-1);
 
 	for (y = y1; y <= y2; y++) {
+		if (x1 > 0 && (term.line[y][x1].mode & ATTR_WDUMMY)) {
+			if (selected(x1-1, y))
+				selclear();
+			tclearwide(x1, y);
+		}
+		if (x2 < term.col-1 && (term.line[y][x2].mode & ATTR_WIDE)) {
+			if (selected(x2+1, y))
+				selclear();
+			tclearwide(x2, y);
+		}
 		term.dirty[y] = 1;
 		for (x = x1; x <= x2; x++) {
 			gp = &term.line[y][x];
@@ -1263,14 +1317,18 @@ tdeletechar(int n)
 	Glyph *line;
 
 	LIMIT(n, 0, term.col - term.c.x);
+	if (n == 0)
+		return;
 
 	dst = term.c.x;
 	src = term.c.x + n;
 	size = term.col - src;
 	line = term.line[term.c.y];
 
+	tclearwide(dst, term.c.y);
 	memmove(&line[dst], &line[src], size * sizeof(Glyph));
 	tclearregion(term.col-n, term.c.y, term.col-1, term.c.y);
+	trepairwide(term.c.y);
 }
 
 void
@@ -1280,14 +1338,19 @@ tinsertblank(int n)
 	Glyph *line;
 
 	LIMIT(n, 0, term.col - term.c.x);
+	if (n == 0)
+		return;
 
 	dst = term.c.x + n;
 	src = term.c.x;
 	size = term.col - dst;
 	line = term.line[term.c.y];
 
+	if (line[src].mode & ATTR_WDUMMY)
+		tclearwide(src, term.c.y);
 	memmove(&line[dst], &line[src], size * sizeof(Glyph));
 	tclearregion(src, term.c.y, dst - 1, term.c.y);
+	trepairwide(term.c.y);
 }
 
 void
@@ -2222,12 +2285,7 @@ tcontrolcode(uchar ascii)
 		tputtab(1);
 		return;
 	case '\b':   /* BS */
-		if (term.c.x > 0 &&
-			term.line[term.c.y][term.c.x-1].mode & ATTR_WDUMMY) {
-			tmoveto(term.c.x-2, term.c.y);
-		} else {
-			tmoveto(term.c.x-1, term.c.y);
-		}
+		tmoveto(term.c.x-1, term.c.y);
 		return;
 	case '\r':   /* CR */
 		tmoveto(0, term.c.y);
@@ -2514,6 +2572,9 @@ check_control_code:
 	if (selected(term.c.x, term.c.y))
 		selclear();
 
+	if (width == 0)
+		return;
+
 	gp = &term.line[term.c.y][term.c.x];
 	if (IS_SET(MODE_WRAP) && (term.c.state & CURSOR_WRAPNEXT)) {
 		gp->mode |= ATTR_WRAP;
@@ -2522,8 +2583,11 @@ check_control_code:
 	}
 
 	if (IS_SET(MODE_INSERT) && term.c.x+width < term.col) {
+		if (gp->mode & ATTR_WDUMMY)
+			tclearwide(term.c.x, term.c.y);
 		memmove(gp+width, gp, (term.col - term.c.x - width) * sizeof(Glyph));
 		gp->mode &= ~ATTR_WIDE;
+		trepairwide(term.c.y);
 	}
 
 	if (term.c.x+width > term.col) {
