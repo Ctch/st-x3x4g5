@@ -92,6 +92,7 @@ typedef struct {
 	Colormap cmap;
 	Window win;
 	Drawable buf;
+	Cursor vcursor, hcursor;
 	GlyphFontSpec *specbuf; /* font spec buffer used for rendering */
 	Atom xembed, wmdeletewin, netwmname, netwmiconname, netwmpid;
 	struct {
@@ -105,6 +106,8 @@ typedef struct {
 	XSetWindowAttributes attrs;
 	int scr;
 	int isfixed; /* is fixed geometry? */
+	int pointerhidden;
+	int pointermotion;
 	int l, t; /* left and top offset */
 	int gm; /* geometry mask */
 } XWindow;
@@ -163,6 +166,9 @@ static void xunloadfont(Font *);
 static void xunloadfonts(void);
 static void xsetenv(void);
 static void xseturgency(int);
+static Cursor xcreatehiddencursor(void);
+static void xsetpointercursor(int);
+static void xupdatepointermotion(void);
 static int evcol(XEvent *);
 static int evrow(XEvent *);
 
@@ -372,6 +378,46 @@ ttysend(const Arg *arg)
 	ttywrite(arg->s, strlen(arg->s), 1);
 }
 
+Cursor
+xcreatehiddencursor(void)
+{
+	static char empty[] = { 0 };
+	XColor color;
+	Pixmap bitmap;
+	Cursor cursor;
+
+	memset(&color, 0, sizeof color);
+	bitmap = XCreateBitmapFromData(xw.dpy, xw.win, empty, 1, 1);
+	if (bitmap == None)
+		return None;
+
+	cursor = XCreatePixmapCursor(xw.dpy, bitmap, bitmap, &color, &color, 0, 0);
+	XFreePixmap(xw.dpy, bitmap);
+
+	return cursor;
+}
+
+void
+xupdatepointermotion(void)
+{
+	MODBIT(xw.attrs.event_mask, xw.pointermotion || xw.pointerhidden,
+	       PointerMotionMask);
+	XChangeWindowAttributes(xw.dpy, xw.win, CWEventMask, &xw.attrs);
+}
+
+void
+xsetpointercursor(int hidden)
+{
+	Cursor cursor = hidden ? xw.hcursor : xw.vcursor;
+
+	if (xw.pointerhidden == hidden || cursor == None)
+		return;
+
+	XDefineCursor(xw.dpy, xw.win, cursor);
+	xw.pointerhidden = hidden;
+	xupdatepointermotion();
+}
+
 int
 evcol(XEvent *e)
 {
@@ -515,6 +561,8 @@ bpress(XEvent *e)
 	int btn = e->xbutton.button;
 	struct timespec now;
 	int snap;
+
+	xsetpointercursor(0);
 
 	if (1 <= btn && btn <= 11)
 		buttons |= 1 << (btn-1);
@@ -743,6 +791,8 @@ brelease(XEvent *e)
 {
 	int btn = e->xbutton.button;
 
+	xsetpointercursor(0);
+
 	if (1 <= btn && btn <= 11)
 		buttons &= ~(1 << (btn-1));
 
@@ -760,6 +810,8 @@ brelease(XEvent *e)
 void
 bmotion(XEvent *e)
 {
+	xsetpointercursor(0);
+
 	if (IS_SET(MODE_MOUSE) && !(e->xbutton.state & forcemousemod)) {
 		mousereport(e);
 		return;
@@ -1278,7 +1330,6 @@ void
 xinit(int cols, int rows)
 {
 	XGCValues gcvalues;
-	Cursor cursor;
 	Window parent, root;
 	pid_t thispid = getpid();
 	XColor xmousefg, xmousebg;
@@ -1352,8 +1403,9 @@ xinit(int cols, int rows)
 	}
 
 	/* white cursor, black outline */
-	cursor = XCreateFontCursor(xw.dpy, mouseshape);
-	XDefineCursor(xw.dpy, xw.win, cursor);
+	xw.vcursor = XCreateFontCursor(xw.dpy, mouseshape);
+	xw.hcursor = xcreatehiddencursor();
+	XDefineCursor(xw.dpy, xw.win, xw.vcursor);
 
 	if (XParseColor(xw.dpy, xw.cmap, colorname[mousefg], &xmousefg) == 0) {
 		xmousefg.red   = 0xffff;
@@ -1367,7 +1419,7 @@ xinit(int cols, int rows)
 		xmousebg.blue  = 0x0000;
 	}
 
-	XRecolorCursor(xw.dpy, cursor, &xmousefg, &xmousebg);
+	XRecolorCursor(xw.dpy, xw.vcursor, &xmousefg, &xmousebg);
 
 	xw.xembed = XInternAtom(xw.dpy, "_XEMBED", False);
 	xw.wmdeletewin = XInternAtom(xw.dpy, "WM_DELETE_WINDOW", False);
@@ -2522,8 +2574,8 @@ unmap(XEvent *ev)
 void
 xsetpointermotion(int set)
 {
-	MODBIT(xw.attrs.event_mask, set, PointerMotionMask);
-	XChangeWindowAttributes(xw.dpy, xw.win, CWEventMask, &xw.attrs);
+	xw.pointermotion = set;
+	xupdatepointermotion();
 }
 
 void
@@ -2642,6 +2694,8 @@ kpress(XEvent *ev)
 	Rune c;
 	Status status;
 	Shortcut *bp;
+
+	xsetpointercursor(1);
 
 	if (IS_SET(MODE_KBDLOCK))
 		return;
