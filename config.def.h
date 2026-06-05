@@ -13,7 +13,7 @@ static char *font2[] = {
 };
 
 static int borderpx_left = 16;
-static int borderpx_top = 20;
+static int borderpx_top = 10;
 static int borderpx_right = 16;
 static int borderpx_down = 0;
 
