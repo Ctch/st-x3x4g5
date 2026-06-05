@@ -45,8 +45,8 @@ static short cyoffset = 0;
 static int disableboldfont = 1;
 
 /* Text underline rendering. Positive offset moves the line lower. */
-static int underlineoffset = 4;
-static int underlinethickness = 2;
+static int underlineoffset = 5;
+static int underlinethickness = 1;
 
 /*
  * word delimiter string
