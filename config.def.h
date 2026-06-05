@@ -5,15 +5,15 @@
  *
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
-static char *font = "Victor Mono SemiBold:pixelsize=21:antialias=true:autohint=true";
+static char *font = "Victor Mono SemiBold:pixelsize=22:antialias=true:autohint=true";
 /* Spare fonts */
 static char *font2[] = {
-        "MapleMono NF CN:pixelsize=21:antialias=true:autohint=true",
-	"LXGW WenKai:pixelsize=21:antialias=true:autohint=true",
+        "MapleMono NF CN:pixelsize=22:antialias=true:autohint=true",
+	"LXGW WenKai:pixelsize=22:antialias=true:autohint=true",
 };
 
 static int borderpx_left = 16;
-static int borderpx_top = 10;
+static int borderpx_top = 18;
 static int borderpx_right = 16;
 static int borderpx_down = 0;
 
@@ -36,7 +36,7 @@ char *vtiden = "\033[?6c";
 
 /* Kerning / character bounding-box multipliers */
 static float cwscale = 1.0;
-static float chscale = 1.15;
+static float chscale = 1.2;
 /* Character rendering offsets in pixels */
 static short cxoffset = 0;
 static short cyoffset = 0;
