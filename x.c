@@ -54,6 +54,7 @@ typedef struct {
 static void clipcopy(const Arg *);
 static void clippaste(const Arg *);
 static void numlock(const Arg *);
+static void kbdselyank(const Arg *);
 static void selpaste(const Arg *);
 static void zoom(const Arg *);
 static void zoomabs(const Arg *);
@@ -317,6 +318,22 @@ clipcopy(const Arg *dummy)
 		clipboard = XInternAtom(xw.dpy, "CLIPBOARD", 0);
 		XSetSelectionOwner(xw.dpy, clipboard, xw.win, CurrentTime);
 	}
+}
+
+void
+kbdselyank(const Arg *dummy)
+{
+	char *seltext;
+
+	if (!copymode_active())
+		return;
+
+	if ((seltext = getsel()) == NULL)
+		return;
+
+	setsel(seltext, CurrentTime);
+	clipcopy(NULL);
+	copymode_quit(dummy);
 }
 
 void
@@ -2205,6 +2222,7 @@ static void
 cursortrailtrack(int cx, int cy, XRenderColor color, struct timespec now)
 {
 	int age;
+	int style = copymode_active() ? 2 : win.cursor;
 
 	if (!cursortrailok() || !cursortrailcellok(cx, cy)) {
 		ctrailvalid = 0;
@@ -2214,7 +2232,7 @@ cursortrailtrack(int cx, int cy, XRenderColor color, struct timespec now)
 	if (!ctrailvalid) {
 		ctrailx = cx;
 		ctraily = cy;
-		ctrailstyle = win.cursor;
+		ctrailstyle = style;
 		ctrailcolor = color;
 		ctraillast = now;
 		ctrailvalid = 1;
@@ -2222,7 +2240,7 @@ cursortrailtrack(int cx, int cy, XRenderColor color, struct timespec now)
 	}
 
 	if (cx == ctrailx && cy == ctraily) {
-		ctrailstyle = win.cursor;
+		ctrailstyle = style;
 		ctrailcolor = color;
 		return;
 	}
@@ -2233,7 +2251,7 @@ cursortrailtrack(int cx, int cy, XRenderColor color, struct timespec now)
 
 	ctrailx = cx;
 	ctraily = cy;
-	ctrailstyle = win.cursor;
+	ctrailstyle = style;
 	ctrailcolor = color;
 	ctraillast = now;
 }
@@ -2345,6 +2363,7 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 	XRenderColor trailcol;
 	struct timespec now;
 	int haveclock = 0;
+	int style = copymode_active() ? 2 : win.cursor;
 
 	/* remove the old cursor */
 	if (selected(ox, oy))
@@ -2420,7 +2439,7 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 
 	/* draw the new one */
 	if (IS_SET(MODE_FOCUSED)) {
-		switch (win.cursor) {
+		switch (style) {
 		case 7: /* st extension */
 			g.u = 0x2603; /* snowman (U+2603) */
 			/* FALLTHROUGH */
@@ -2730,7 +2749,18 @@ kpress(XEvent *ev)
 	} else {
 		len = XLookupString(e, buf, sizeof buf, &ksym, NULL);
 	}
-	/* 1. shortcuts */
+	/* 1. copy mode shortcuts */
+	if (copymode_active()) {
+		for (bp = selshortcuts; bp < selshortcuts + LEN(selshortcuts); bp++) {
+			if (ksym == bp->keysym && match(bp->mod, e->state)) {
+				bp->func(&(bp->arg));
+				return;
+			}
+		}
+		return;
+	}
+
+	/* 2. shortcuts */
 	for (bp = shortcuts; bp < shortcuts + LEN(shortcuts); bp++) {
 		if (ksym == bp->keysym && match(bp->mod, e->state)) {
 			bp->func(&(bp->arg));
@@ -2738,13 +2768,13 @@ kpress(XEvent *ev)
 		}
 	}
 
-	/* 2. custom keys from config.h */
+	/* 3. custom keys from config.h */
 	if ((customkey = kmap(ksym, e->state))) {
 		ttywrite(customkey, strlen(customkey), 1);
 		return;
 	}
 
-	/* 3. composed string from input method */
+	/* 4. composed string from input method */
 	if (len == 0)
 		return;
 	if (len == 1 && e->state & Mod1Mask) {

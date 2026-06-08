@@ -19,6 +19,7 @@
 
 #define TRUECOLOR(r,g,b)	(1 << 24 | (r) << 16 | (g) << 8 | (b))
 #define IS_TRUECOL(x)		(1 << 24 & (x))
+#define HISTSIZE		2000
 
 enum glyph_attribute {
 	ATTR_NULL       = 0,
@@ -84,10 +85,34 @@ typedef union {
 	const char *s;
 } Arg;
 
+enum copymode_move {
+	COPYMODE_LEFT = 0,
+	COPYMODE_RIGHT,
+	COPYMODE_UP,
+	COPYMODE_DOWN,
+	COPYMODE_HALFPAGEUP,
+	COPYMODE_HALFPAGEDOWN,
+	COPYMODE_TOP,
+	COPYMODE_BOTTOM,
+	COPYMODE_WORDNEXT,
+	COPYMODE_WORDBACK,
+	COPYMODE_BLANKUP,
+	COPYMODE_BLANKDOWN,
+};
+
 void die(const char *, ...);
 void redraw(void);
 void draw(void);
 
+int copymode_active(void);
+void copymode_deselect(const Arg *);
+void copymode_move(const Arg *);
+void copymode_quit(const Arg *);
+void copymode_select(const Arg *);
+void copymode_selectline(const Arg *);
+void copymode_toggle(const Arg *);
+void kscrolldown(const Arg *);
+void kscrollup(const Arg *);
 void printscreen(const Arg *);
 void printsel(const Arg *);
 void sendbreak(const Arg *);

@@ -274,6 +274,7 @@ static Shortcut shortcuts[] = {
 	{ ControlMask,          XK_Print,       toggleprinter,  {.i =  0} },
 	{ ShiftMask,            XK_Print,       printscreen,    {.i =  0} },
 	{ XK_ANY_MOD,           XK_Print,       printsel,       {.i =  0} },
+	{ MODKEY,               XK_q,           copymode_toggle,{.i =  0} },
 	{ TERMMOD,              XK_Prior,       zoom,           {.f = +1} },
 	{ TERMMOD,              XK_Next,        zoom,           {.f = -1} },
 	{ TERMMOD,              XK_Home,        zoomreset,      {.f =  0} },
@@ -282,6 +283,27 @@ static Shortcut shortcuts[] = {
 	{ TERMMOD,              XK_Y,           selpaste,       {.i =  0} },
 	{ ShiftMask,            XK_Insert,      selpaste,       {.i =  0} },
 	{ TERMMOD,              XK_Num_Lock,    numlock,        {.i =  0} },
+};
+
+static Shortcut selshortcuts[] = {
+	/* mask                 keysym          function        argument */
+	{ XK_NO_MOD,            XK_q,           copymode_quit,  {.i = 0} },
+	{ XK_NO_MOD,            XK_Escape,      copymode_deselect, {.i = 0} },
+	{ XK_NO_MOD,            XK_h,           copymode_move,  {.i = COPYMODE_LEFT} },
+	{ XK_NO_MOD,            XK_j,           copymode_move,  {.i = COPYMODE_DOWN} },
+	{ XK_NO_MOD,            XK_k,           copymode_move,  {.i = COPYMODE_UP} },
+	{ XK_NO_MOD,            XK_l,           copymode_move,  {.i = COPYMODE_RIGHT} },
+	{ ControlMask,          XK_u,           copymode_move,  {.i = COPYMODE_HALFPAGEUP} },
+	{ ControlMask,          XK_d,           copymode_move,  {.i = COPYMODE_HALFPAGEDOWN} },
+	{ XK_NO_MOD,            XK_g,           copymode_move,  {.i = COPYMODE_TOP} },
+	{ ShiftMask,            XK_G,           copymode_move,  {.i = COPYMODE_BOTTOM} },
+	{ XK_NO_MOD,            XK_w,           copymode_move,  {.i = COPYMODE_WORDNEXT} },
+	{ XK_NO_MOD,            XK_b,           copymode_move,  {.i = COPYMODE_WORDBACK} },
+	{ ShiftMask,            XK_braceleft,   copymode_move,  {.i = COPYMODE_BLANKUP} },
+	{ ShiftMask,            XK_braceright,  copymode_move,  {.i = COPYMODE_BLANKDOWN} },
+	{ XK_NO_MOD,            XK_v,           copymode_select,{.i = 0} },
+	{ ShiftMask,            XK_V,           copymode_selectline, {.i = 0} },
+	{ XK_NO_MOD,            XK_y,           kbdselyank,     {.i = 0} },
 };
 
 /*
