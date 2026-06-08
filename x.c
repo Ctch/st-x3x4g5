@@ -2363,21 +2363,26 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 	XRenderColor trailcol;
 	struct timespec now;
 	int haveclock = 0;
-	int style = copymode_active() ? 2 : win.cursor;
+	int incopymode = copymode_active();
+	int style = incopymode ? 2 : win.cursor;
 
 	/* remove the old cursor */
 	if (selected(ox, oy))
 		og.mode ^= ATTR_REVERSE;
 	xdrawglyph(og, ox, oy);
 
-	if (IS_SET(MODE_HIDE)) {
+	if (IS_SET(MODE_HIDE) && !incopymode) {
 		cursorblinkclear();
 		cursortrailclear();
 		cursoranimclear();
 		return;
 	}
 
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+	if (incopymode) {
+		cursorblinkclear();
+		cursortrailclear();
+		cursoranimclear();
+	} else if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
 		haveclock = 1;
 		if (glyphfgcolor(g, cx, cy, &trailcol)) {
 			if (cursortrailok())
@@ -2398,13 +2403,21 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 		cursoranimclear();
 	}
 
-	if (haveclock && !cursorblinkvisible(cx, cy, now))
+	if (!incopymode && haveclock && !cursorblinkvisible(cx, cy, now))
 		return;
 
 	/*
 	 * Select the right color for the right mode.
 	 */
 	g.mode &= ATTR_BOLD|ATTR_ITALIC|ATTR_UNDERLINE|ATTR_STRUCK|ATTR_WIDE|ATTR_BOXDRAW;
+
+	if (incopymode) {
+		g.mode &= ATTR_WIDE|ATTR_BOXDRAW;
+		g.fg = defaultbg;
+		g.bg = defaultcs;
+		xdrawglyph(g, cx, cy);
+		return;
+	}
 
 	if (IS_SET(MODE_REVERSE)) {
 		g.mode |= ATTR_REVERSE;

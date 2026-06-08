@@ -3081,9 +3081,7 @@ twrite(const char *buf, int buflen, int show_ctrl)
 	Rune u;
 	int n;
 
-	if (copymode.active)
-		copymodeexit(1);
-	else if (term.scr > 0) {
+	if (!copymode.active && term.scr > 0) {
 		term.scr = 0;
 		tfulldirt();
 	}
