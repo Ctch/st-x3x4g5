@@ -212,13 +212,13 @@ static int cursorblinkinterval = 600;
  */
 static unsigned int cursortrail = 1;
 // cursortraillen：残影格数。越大越拖。想跟手，设 2 或 3。
-static unsigned int cursortraillen = 2;
+static unsigned int cursortraillen = 3;
 // cursortrailtimeout：残影淡出时间，单位 ms。越大越黏。推荐 30-45。
 static unsigned int cursortrailtimeout = 45;
 // cursortrailminage：光标停在旧格多久才留下残影。太大残影断，太小容易糊。推荐 4-8。
-static unsigned int cursortrailminage = 4;
+static unsigned int cursortrailminage = 1;
 // cursortrailinterval：残影重绘间隔。越小越细腻但更耗 CPU。8 通常比 4 更稳，4 已经很激进。
-static unsigned int cursortrailinterval = 4;
+static unsigned int cursortrailinterval = 1;
 
 /*
  * Cursor animation.
