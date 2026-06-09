@@ -211,18 +211,25 @@ static int cursorblinkinterval = 600;
  * The trail fades from the current glyph foreground to defaultbg as it ages.
  */
 static unsigned int cursortrail = 1;
-static unsigned int cursortraillen = 3;
-static unsigned int cursortrailtimeout = 50;
-static unsigned int cursortrailminage = 8;
-static unsigned int cursortrailinterval = 4;
+// cursortraillen：残影格数。越大越拖。想跟手，设 2 或 3。
+static unsigned int cursortraillen = 2;
+// cursortrailtimeout：残影淡出时间，单位 ms。越大越黏。推荐 30-45。
+static unsigned int cursortrailtimeout = 35;
+// cursortrailminage：光标停在旧格多久才留下残影。太大残影断，太小容易糊。推荐 4-8。
+static unsigned int cursortrailminage = 5;
+// cursortrailinterval：残影重绘间隔。越小越细腻但更耗 CPU。8 通常比 4 更稳，4 已经很激进。
+static unsigned int cursortrailinterval = 8;
 
 /*
  * Cursor animation.
  */
 static int cursoranim = 1;
-static int cursoranimduration = 80;
-static int cursoranimminage = 20;
-static int cursoranimmaxdist = 3;
+// cursoranimduration：这个最影响跟手感。当前 80ms 会明显“追着跑”。推荐降到 25-45。
+static int cursoranimduration = 35;
+// cursoranimminage：低于这个移动间隔就不做动画。想快速连按更跟手，可设 25-35。
+static int cursoranimminage = 25;
+// cursoranimmaxdist：超过多少格不动画。推荐 2 或 3，大跳动不要动画会更干净。
+static int cursoranimmaxdist = 2;
 
 /*
  * Default columns and rows numbers
