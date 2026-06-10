@@ -229,11 +229,11 @@ static unsigned int cursortrailinterval = 4;
  */
 static int cursoranim = 1;
 // cursoranimduration：这个最影响跟手感。当前 80ms 会明显“追着跑”。推荐降到 25-45。
-static int cursoranimduration = 80;
+static int cursoranimduration = 100;
 // cursoranimminage：低于这个移动间隔就不做动画。想快速连按更跟手，可设 25-35。
 static int cursoranimminage = 25;
 // cursoranimmaxdist：超过多少格不动画。推荐 2 或 3，大跳动不要动画会更干净。
-static int cursoranimmaxdist = 10;
+static int cursoranimmaxdist = 100;
 
 /*
  * Default columns and rows numbers
