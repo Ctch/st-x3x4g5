@@ -12,6 +12,8 @@ static char *font2[] = {
     "LXGW WenKai:pixelsize=21:antialias=true:autohint=true",
 };
 
+// fontsize 20, borderpx top 12, scaleh 1.06
+
 static int borderpx_left = 16;
 static int borderpx_top = 20;
 static int borderpx_right = 16;
