@@ -218,15 +218,19 @@ static void tdefutf8(char);
 static int32_t tdefcolor(const int *, int *, int);
 static void tdeftran(char);
 static void tstrsequence(uchar);
+static void linefixwide(Line, int *);
 
 static void drawregion(int, int, int, int);
 static void copymodeapplymove(int, int, int);
+static void copymodeclampbounds(void);
 static void copymodeclamp(void);
 static void copymodeenter(void);
 static void copymodeexit(int);
+static void copymodefixwide(int *, int);
 static void copymodejumpblank(int);
 static void copymodemoveleft(void);
 static void copymodemoveright(void);
+static int copymodestepcell(int);
 static void copymodemoveword(int);
 static void copymodeupdate(void);
 
@@ -729,6 +733,7 @@ copymodeisdelim(int x, int y)
 
 	LIMIT(y, 0, term.row - 1);
 	LIMIT(x, 0, term.col - 1);
+	copymodefixwide(&x, y);
 	u = TLINE(y)[x].u;
 	return u == '\0' || ISDELIM(u);
 }
@@ -741,7 +746,23 @@ copymodeisblankline(int y)
 }
 
 static void
-copymodeclamp(void)
+linefixwide(Line line, int *x)
+{
+	LIMIT(*x, 0, term.col - 1);
+
+	if (*x > 0 && (line[*x].mode & ATTR_WDUMMY))
+		(*x)--;
+}
+
+static void
+copymodefixwide(int *x, int y)
+{
+	LIMIT(y, 0, term.row - 1);
+	linefixwide(TLINE(y), x);
+}
+
+static void
+copymodeclampbounds(void)
 {
 	int len;
 
@@ -755,13 +776,17 @@ copymodeclamp(void)
 		   !(TLINE(copymode.y)[term.col - 1].mode & ATTR_WRAP)) {
 		copymode.x = len - 1;
 	}
+}
 
-	if (copymode.x > 0 && (TLINE(copymode.y)[copymode.x].mode & ATTR_WDUMMY))
-		copymode.x--;
+static void
+copymodeclamp(void)
+{
+	copymodeclampbounds();
+	copymodefixwide(&copymode.x, copymode.y);
 }
 
 static int
-copymodestep(int dir)
+copymodestepcell(int dir)
 {
 	Arg arg = { .i = 1 };
 	int len;
@@ -795,8 +820,40 @@ copymodestep(int dir)
 		}
 	}
 
-	copymodeclamp();
+	copymodeclampbounds();
 	return 1;
+}
+
+static int
+copymodestep(int dir)
+{
+	int oldx, oldy, oldscr;
+
+	copymodeclamp();
+	oldx = copymode.x;
+	oldy = copymode.y;
+	oldscr = term.scr;
+
+	for (;;) {
+		if (!copymodestepcell(dir)) {
+			copymodeclamp();
+			return 0;
+		}
+
+		if (copymode.x > 0 &&
+		    (TLINE(copymode.y)[copymode.x].mode & ATTR_WDUMMY)) {
+			if (dir > 0)
+				continue;
+			copymode.x--;
+			copymodeclampbounds();
+		}
+
+		copymodeclamp();
+		if (copymode.x != oldx || copymode.y != oldy ||
+		    term.scr != oldscr)
+			return 1;
+		return 0;
+	}
 }
 
 static void
@@ -1529,7 +1586,7 @@ tscrollup(int orig, int n, int copyhist)
 				term.line[i+1] = temp;
 			}
 		}
-		if (term.scr > 0)
+		if (term.scr > 0 || copymode.active)
 			term.scr = MIN(term.scr + n, term.histlen);
 		if (term.scr == 0)
 			selscroll(orig, -n);
@@ -3249,10 +3306,8 @@ draw(void)
 		LIMIT(cox, 0, term.col - 1);
 		LIMIT(coy, 0, term.row - 1);
 		copymodeclamp();
-		if (TLINE(coy)[cox].mode & ATTR_WDUMMY)
-			cox--;
-		if (TLINE(copymode.y)[copymode.x].mode & ATTR_WDUMMY)
-			copymode.x--;
+		copymodefixwide(&cox, coy);
+		copymodefixwide(&copymode.x, copymode.y);
 		xdrawcursor(copymode.x, copymode.y, TLINE(copymode.y)[copymode.x],
 			    cox, coy, TLINE(coy)[cox]);
 		copymode.ox = copymode.x;
@@ -3261,10 +3316,8 @@ draw(void)
 		/* adjust cursor position */
 		LIMIT(term.ocx, 0, term.col-1);
 		LIMIT(term.ocy, 0, term.row-1);
-		if (term.line[term.ocy][term.ocx].mode & ATTR_WDUMMY)
-			term.ocx--;
-		if (term.line[term.c.y][cx].mode & ATTR_WDUMMY)
-			cx--;
+		linefixwide(term.line[term.ocy], &term.ocx);
+		linefixwide(term.line[term.c.y], &cx);
 
 		xdrawcursor(cx, term.c.y, term.line[term.c.y][cx],
 			    term.ocx, term.ocy, term.line[term.ocy][term.ocx]);
