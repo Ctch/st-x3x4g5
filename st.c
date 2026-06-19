@@ -1487,8 +1487,12 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 		break;
 	default:
 #ifdef __OpenBSD__
-		if (pledge("stdio rpath tty proc", NULL) == -1)
-			die("pledge\n");
+		/*
+		 * Split panes spawn shells after startup.  A pledged parent would
+		 * pass its restrictions to those children before they can create a
+		 * controlling tty, so keep the parent unpledged and pledge only in
+		 * the child after the tty setup above.
+		 */
 #endif
 		close(s);
 		cmdfd = m;
