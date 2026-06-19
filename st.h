@@ -117,6 +117,7 @@ void kscrollup(const Arg *);
 void printscreen(const Arg *);
 void printsel(const Arg *);
 void sendbreak(const Arg *);
+void splitadjust(const Arg *);
 void splitfocus(const Arg *);
 void splittoggle(const Arg *);
 void toggleprinter(const Arg *);

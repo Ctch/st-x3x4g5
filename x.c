@@ -2820,7 +2820,8 @@ kpress(XEvent *ev)
 	}
 	/* 1. split shortcuts still work while copy mode is active */
 	for (bp = shortcuts; bp < shortcuts + LEN(shortcuts); bp++) {
-		if ((bp->func == splitfocus || bp->func == splittoggle) &&
+		if ((bp->func == splitadjust || bp->func == splitfocus ||
+		    bp->func == splittoggle) &&
 		    ksym == bp->keysym && match(bp->mod, e->state)) {
 			bp->func(&(bp->arg));
 			xsetpanemode(splitfocused());

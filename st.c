@@ -280,6 +280,7 @@ static int paneidx;
 static int spliton;
 static int focuspane;
 static int splitcols, splitrows_total, splittw, splitth;
+static int splittoprows;
 static volatile sig_atomic_t childexited;
 static int iofd = 1;
 static char *splitshell;
@@ -376,21 +377,17 @@ splitisactive(int n)
 static void
 splitlayout(int rows, int *top, int *bottom)
 {
-	int avail;
+	int avail, topmanual;
 
 	*top = rows;
 	*bottom = 0;
 	if (rows < 3)
 		return;
 	avail = rows - 1;
-	*top = avail / 2;
-	if (*top < 1)
-		*top = 1;
+	topmanual = splittoprows > 0 ? splittoprows : avail / 2;
+	LIMIT(topmanual, 1, avail - 1);
+	*top = topmanual;
 	*bottom = avail - *top;
-	if (*bottom < 1) {
-		*bottom = 1;
-		*top = avail - 1;
-	}
 }
 
 static int
@@ -499,6 +496,21 @@ splitfocus(const Arg *arg)
 	if (n < 0)
 		n = focuspane ? 0 : 1;
 	splitsetfocus(n);
+	draw();
+}
+
+void
+splitadjust(const Arg *arg)
+{
+	int avail;
+
+	if (!spliton || splitrows_total < 3)
+		return;
+	avail = splitrows_total - 1;
+	splittoprows = panes[0].rows + arg->i;
+	LIMIT(splittoprows, 1, avail - 1);
+	splitupdatelayout();
+	xcursorclear();
 	draw();
 }
 
@@ -1655,6 +1667,8 @@ splitupdatelayout(void)
 		splitclose();
 
 	splitlayout(splitrows_total, &top, &bottom);
+	if (splittoprows > 0)
+		splittoprows = top;
 	if (!spliton) {
 		focuspane = 0;
 		panes[0].yoff = 0;
@@ -1753,6 +1767,7 @@ splitclose(void)
 	pane->alive = 0;
 
 	spliton = 0;
+	splittoprows = 0;
 	paneactivate(0);
 	panes[0].yoff = 0;
 	panes[0].rows = splitrows_total;
