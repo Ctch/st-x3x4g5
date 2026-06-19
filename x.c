@@ -73,6 +73,10 @@ static void ttysend(const Arg *);
 #define TRUERED(x)		(((x) & 0xff0000) >> 8)
 #define TRUEGREEN(x)		(((x) & 0xff00))
 #define TRUEBLUE(x)		(((x) & 0xff) << 8)
+#define PANE_APP_MODES		(MODE_APPKEYPAD|MODE_MOUSE|MODE_MOUSESGR| \
+				MODE_REVERSE|MODE_KBDLOCK|MODE_HIDE| \
+				MODE_APPCURSOR|MODE_MOUSEX10|MODE_8BIT| \
+				MODE_FOCUS|MODE_MOUSEMANY|MODE_BRCKTPASTE)
 
 typedef XftDraw *Draw;
 typedef XftColor Color;
@@ -230,6 +234,9 @@ static DC dc;
 static XWindow xw;
 static XSelection xsel;
 static TermWindow win;
+static int xrowoff;
+static int panemode[2];
+static int panecursor[2] = { -1, -1 };
 
 enum { CURSORTRAILMAX = 32 };
 
@@ -271,6 +278,14 @@ static CursorBlink cblink = { .lastx = -1, .lasty = -1, .visible = 1 };
 static void cursorblinkclear(void);
 static void cursortrailclear(void);
 static void cursoranimclear(void);
+
+void
+xcursorclear(void)
+{
+	cursorblinkclear();
+	cursortrailclear();
+	cursoranimclear();
+}
 
 /* Font Ring Cache */
 enum {
@@ -444,12 +459,18 @@ evcol(XEvent *e)
 	return x / win.cw;
 }
 
-int
-evrow(XEvent *e)
+static int
+evscreenrow(XEvent *e)
 {
 	int y = e->xbutton.y - borderpx_top;
 	LIMIT(y, 0, win.th - 1);
 	return y / win.ch;
+}
+
+int
+evrow(XEvent *e)
+{
+	return splitrow(evscreenrow(e));
 }
 
 void
@@ -584,6 +605,9 @@ bpress(XEvent *e)
 
 	if (1 <= btn && btn <= 11)
 		buttons |= 1 << (btn-1);
+
+	splitfocusrow(evscreenrow(e));
+	xsetpanemode(splitfocused());
 
 	if (IS_SET(MODE_MOUSE) && !(e->xbutton.state & forcemousemod)) {
 		mousereport(e);
@@ -853,9 +877,8 @@ cresize(int width, int height)
 	col = MAX(1, col);
 	row = MAX(1, row);
 
-	tresize(col, row);
 	xresize(col, row);
-	ttyresize(win.tw, win.th);
+	splitresize(col, row, win.tw, win.th);
 }
 
 void
@@ -1491,7 +1514,8 @@ xinit(int cols, int rows)
 int
 xmakeglyphfontspecs(XftGlyphFontSpec *specs, const Glyph *glyphs, int len, int x, int y)
 {
-	float winx = borderpx_left + x * win.cw, winy = borderpx_top + y * win.ch, xp, yp;
+	float winx = borderpx_left + x * win.cw,
+	      winy = borderpx_top + (y + xrowoff) * win.ch, xp, yp;
 	ushort mode, prevmode = USHRT_MAX;
 	Font *font = &dc.font;
 	int frcflags = FRC_NORMAL;
@@ -1633,7 +1657,8 @@ void
 xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, int y, int dmode)
 {
 	int charlen = len * ((base.mode & ATTR_WIDE) ? 2 : 1);
-	int winx = borderpx_left + x * win.cw, winy = borderpx_top + y * win.ch,
+	int sy = y + xrowoff;
+	int winx = borderpx_left + x * win.cw, winy = borderpx_top + sy * win.ch,
 	    width = charlen * win.cw;
 	Color *fg, *bg, *temp, revfg, revbg, truefg, truebg;
 	XRenderColor colfg, colbg;
@@ -1727,15 +1752,15 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
     if (dmode & DRAW_BG) {
         /* Intelligent cleaning up of the borders. */
         if (x == 0) {
-            xclear(0, (y == 0)? 0 : winy, borderpx_left,
+            xclear(0, (sy == 0)? 0 : winy, borderpx_left,
                    winy + win.ch +
                    ((winy + win.ch >= borderpx_top + win.th)? win.h : 0));
         }
         if (winx + width >= borderpx_left + win.tw) {
-            xclear(winx + width, (y == 0)? 0 : winy, win.w,
+            xclear(winx + width, (sy == 0)? 0 : winy, win.w,
                    ((winy + win.ch >= borderpx_top + win.th)? win.h : (winy + win.ch)));
         }
-        if (y == 0)
+        if (sy == 0)
             xclear(winx, 0, winx + width, borderpx_top);
         if (winy + win.ch >= borderpx_top + win.th)
             xclear(winx, winy + win.ch, winx + width, win.h);
@@ -2116,9 +2141,9 @@ cursoranimdraw(int cx, int cy, struct timespec now)
 	}
 
 	fromx = borderpx_left + canim.fromx * win.cw;
-	fromy = borderpx_top + canim.fromy * win.ch;
+	fromy = borderpx_top + (canim.fromy + xrowoff) * win.ch;
 	tox = borderpx_left + canim.tox * win.cw;
-	toy = borderpx_top + canim.toy * win.ch;
+	toy = borderpx_top + (canim.toy + xrowoff) * win.ch;
 	px = fromx + (int)((long long)(tox - fromx) * elapsed / canim.duration);
 	py = fromy + (int)((long long)(toy - fromy) * elapsed / canim.duration);
 
@@ -2265,7 +2290,7 @@ cursortraildrawcell(const CursorTrail *t, Color *col)
 		return;
 
 	x = borderpx_left + t->x * win.cw;
-	y = borderpx_top + t->y * win.ch;
+	y = borderpx_top + (t->y + xrowoff) * win.ch;
 
 	switch (t->style) {
 	case 3: /* Blinking Underline */
@@ -2465,7 +2490,7 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 		case 4: /* Steady Underline */
 			XftDrawRect(xw.draw, &drawcol,
 					borderpx_left + cx * win.cw,
-					borderpx_top + (cy + 1) * win.ch - \
+					borderpx_top + (cy + xrowoff + 1) * win.ch - \
 						cursorthickness,
 					win.cw, cursorthickness);
 			break;
@@ -2473,26 +2498,26 @@ xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og)
 		case 6: /* Steady bar */
 			XftDrawRect(xw.draw, &drawcol,
 					borderpx_left + cx * win.cw,
-					borderpx_top + cy * win.ch,
+					borderpx_top + (cy + xrowoff) * win.ch,
 					cursorthickness, win.ch);
 			break;
 		}
 	} else {
 		XftDrawRect(xw.draw, &drawcol,
 				borderpx_left + cx * win.cw,
-				borderpx_top + cy * win.ch,
+				borderpx_top + (cy + xrowoff) * win.ch,
 				win.cw - 1, 1);
 		XftDrawRect(xw.draw, &drawcol,
 				borderpx_left + cx * win.cw,
-				borderpx_top + cy * win.ch,
+				borderpx_top + (cy + xrowoff) * win.ch,
 				1, win.ch - 1);
 		XftDrawRect(xw.draw, &drawcol,
 				borderpx_left + (cx + 1) * win.cw - 1,
-				borderpx_top + cy * win.ch,
+				borderpx_top + (cy + xrowoff) * win.ch,
 				1, win.ch - 1);
 		XftDrawRect(xw.draw, &drawcol,
 				borderpx_left + cx * win.cw,
-				borderpx_top + (cy + 1) * win.ch - 1,
+				borderpx_top + (cy + xrowoff + 1) * win.ch - 1,
 				win.cw, 1);
 	}
 }
@@ -2547,6 +2572,21 @@ xstartdraw(void)
 }
 
 void
+xsetpanemode(int n)
+{
+	if (!BETWEEN(n, 0, (int)LEN(panemode) - 1))
+		n = splitfocused();
+	win.mode = (win.mode & ~PANE_APP_MODES) | panemode[n];
+	win.cursor = panecursor[n] >= 0 ? panecursor[n] : cursorshape;
+}
+
+void
+xsetrowoff(int rowoff)
+{
+	xrowoff = rowoff;
+}
+
+void
 xdrawline(Line line, int x1, int y1, int x2)
 {
 	int i, x, ox, numspecs, numspecs_cached;
@@ -2585,6 +2625,17 @@ xdrawline(Line line, int x1, int y1, int x2)
 }
 
 void
+xdrawseparator(int row)
+{
+	int y = borderpx_top + row * win.ch;
+	int h = MAX(1, win.ch / 12);
+
+	xclear(0, y, win.w, y + win.ch);
+	XftDrawRect(xw.draw, &dc.col[4],
+	            borderpx_left, y + (win.ch - h) / 2, win.tw, h);
+}
+
+void
 xfinishdraw(void)
 {
 	XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, win.w,
@@ -2601,7 +2652,7 @@ xximspot(int x, int y)
 		return;
 
 	xw.ime.spot.x = borderpx_left + x * win.cw;
-	xw.ime.spot.y = borderpx_top + (y + 1) * win.ch;
+	xw.ime.spot.y = borderpx_top + (y + splitrowoff() + 1) * win.ch;
 
 	XSetICValues(xw.ime.xic, XNPreeditAttributes, xw.ime.spotlist, NULL);
 }
@@ -2638,6 +2689,8 @@ xsetmode(int set, unsigned int flags)
 {
 	int mode = win.mode;
 	MODBIT(win.mode, set, flags);
+	if (flags & PANE_APP_MODES)
+		panemode[splitactive()] = win.mode & PANE_APP_MODES;
 	if ((win.mode & MODE_REVERSE) != (mode & MODE_REVERSE))
 		redraw();
 }
@@ -2648,6 +2701,7 @@ xsetcursor(int cursor)
 	if (!BETWEEN(cursor, 0, 7)) /* 7: st extension */
 		return 1;
 	win.cursor = cursor;
+	panecursor[splitactive()] = cursor;
 	return 0;
 }
 
@@ -2677,6 +2731,7 @@ focus(XEvent *ev)
 
 	if (e->mode == NotifyGrab)
 		return;
+	xsetpanemode(splitfocused());
 
 	if (ev->type == FocusIn) {
 		if (xw.ime.xic)
@@ -2751,6 +2806,7 @@ kpress(XEvent *ev)
 	Shortcut *bp;
 
 	xsetpointercursor(1);
+	xsetpanemode(splitfocused());
 
 	if (IS_SET(MODE_KBDLOCK))
 		return;
@@ -2762,7 +2818,17 @@ kpress(XEvent *ev)
 	} else {
 		len = XLookupString(e, buf, sizeof buf, &ksym, NULL);
 	}
-	/* 1. copy mode shortcuts */
+	/* 1. split shortcuts still work while copy mode is active */
+	for (bp = shortcuts; bp < shortcuts + LEN(shortcuts); bp++) {
+		if ((bp->func == splitfocus || bp->func == splittoggle) &&
+		    ksym == bp->keysym && match(bp->mod, e->state)) {
+			bp->func(&(bp->arg));
+			xsetpanemode(splitfocused());
+			return;
+		}
+	}
+
+	/* 2. copy mode shortcuts */
 	if (copymode_active()) {
 		for (bp = selshortcuts; bp < selshortcuts + LEN(selshortcuts); bp++) {
 			if (ksym == bp->keysym && match(bp->mod, e->state)) {
@@ -2773,21 +2839,22 @@ kpress(XEvent *ev)
 		return;
 	}
 
-	/* 2. shortcuts */
+	/* 3. shortcuts */
 	for (bp = shortcuts; bp < shortcuts + LEN(shortcuts); bp++) {
 		if (ksym == bp->keysym && match(bp->mod, e->state)) {
 			bp->func(&(bp->arg));
+			xsetpanemode(splitfocused());
 			return;
 		}
 	}
 
-	/* 3. custom keys from config.h */
+	/* 4. custom keys from config.h */
 	if ((customkey = kmap(ksym, e->state))) {
 		ttywrite(customkey, strlen(customkey), 1);
 		return;
 	}
 
-	/* 4. composed string from input method */
+	/* 5. composed string from input method */
 	if (len == 0)
 		return;
 	if (len == 1 && e->state & Mod1Mask) {
@@ -2840,7 +2907,7 @@ run(void)
 	XEvent ev;
 	int w = win.w, h = win.h;
 	fd_set rfd;
-	int xfd = XConnectionNumber(xw.dpy), ttyfd, xev, drawing;
+	int xfd = XConnectionNumber(xw.dpy), ttymaxfd, xev, ttyev, drawing;
 	int animdraw, animtimeout, blinktimeoutleft, traildraw, trailtimeout;
 	struct timespec seltv, *tv, now, lastblink, trigger;
 	double timeout;
@@ -2861,12 +2928,14 @@ run(void)
 		}
 	} while (ev.type != MapNotify);
 
-	ttyfd = ttynew(opt_line, shell, opt_io, opt_cmd);
+	ttynew(opt_line, shell, opt_io, opt_cmd);
 	cresize(w, h);
 
 	for (timeout = -1, drawing = 0, lastblink = (struct timespec){0};;) {
+		ttyreap();
+		xsetpanemode(splitfocused());
 		FD_ZERO(&rfd);
-		FD_SET(ttyfd, &rfd);
+		ttymaxfd = ttyfdset(&rfd);
 		FD_SET(xfd, &rfd);
 
 		if (XPending(xw.dpy))
@@ -2876,19 +2945,20 @@ run(void)
 		seltv.tv_nsec = 1E6 * (timeout - 1E3 * seltv.tv_sec);
 		tv = timeout >= 0 ? &seltv : NULL;
 
-		if (pselect(MAX(xfd, ttyfd)+1, &rfd, NULL, NULL, tv, NULL) < 0) {
+		if (pselect(MAX(xfd, ttymaxfd)+1, &rfd, NULL, NULL, tv, NULL) < 0) {
 			if (errno == EINTR)
 				continue;
 			die("select failed: %s\n", strerror(errno));
 		}
 		clock_gettime(CLOCK_MONOTONIC, &now);
+		ttyreap();
 
-		if (FD_ISSET(ttyfd, &rfd))
-			ttyread();
+		ttyev = ttyreadfds(&rfd);
 
 		xev = 0;
 		while (XPending(xw.dpy)) {
 			xev = 1;
+			xsetpanemode(splitfocused());
 			XNextEvent(xw.dpy, &ev);
 			if (XFilterEvent(&ev, None))
 				continue;
@@ -2907,7 +2977,7 @@ run(void)
 		 * maximum latency intervals during `cat huge.txt`, and perfect
 		 * sync with periodic updates from animations/key-repeats/etc.
 		 */
-		if (FD_ISSET(ttyfd, &rfd) || xev) {
+		if (ttyev || xev) {
 			if (!drawing) {
 				trigger = now;
 				drawing = 1;

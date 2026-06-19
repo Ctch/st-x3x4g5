@@ -1,6 +1,7 @@
 /* See LICENSE for license details. */
 
 #include <stdint.h>
+#include <sys/select.h>
 #include <sys/types.h>
 
 /* macros */
@@ -116,6 +117,8 @@ void kscrollup(const Arg *);
 void printscreen(const Arg *);
 void printsel(const Arg *);
 void sendbreak(const Arg *);
+void splitfocus(const Arg *);
+void splittoggle(const Arg *);
 void toggleprinter(const Arg *);
 
 int tattrset(int);
@@ -124,9 +127,19 @@ void tresize(int, int);
 void tsetdirtattr(int);
 void ttyhangup(void);
 int ttynew(const char *, char *, const char *, char **);
+void ttyreap(void);
+int ttyfdset(fd_set *);
+int ttyreadfds(fd_set *);
 size_t ttyread(void);
 void ttyresize(int, int);
 void ttywrite(const char *, size_t, int);
+
+int splitactive(void);
+int splitfocused(void);
+void splitfocusrow(int);
+int splitrow(int);
+int splitrowoff(void);
+void splitresize(int, int, int, int);
 
 void resettitle(void);
 

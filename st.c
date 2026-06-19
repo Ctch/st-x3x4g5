@@ -167,10 +167,28 @@ typedef struct {
 	int narg;              /* nb of args */
 } STREscape;
 
+typedef struct {
+	Term t;
+	Selection selection;
+	CopyMode cm;
+	CSIEscape csi;
+	STREscape str;
+	TCursor saved[2];
+	char rbuf[BUFSIZ];
+	int rbuflen;
+	int fd;
+	pid_t child;
+	int alive;
+	int yoff;
+	int rows;
+	char cwd[PATH_MAX];
+} Pane;
+
 static void execsh(char *, char **);
 static void stty(char **);
 static void sigchld(int);
 static void ttywriteraw(const char *, size_t);
+static void termfree(void);
 
 static void csidump(void);
 static void csihandle(void);
@@ -221,6 +239,13 @@ static void tstrsequence(uchar);
 static void linefixwide(Line, int *);
 
 static void drawregion(int, int, int, int);
+static void splitclose(void);
+static void splitfulldirt(void);
+static int splitisactive(int);
+static void splitlayout(int, int *, int *);
+static void splitsetfocus(int);
+static void splitspawn(void);
+static void splitupdatelayout(void);
 static void copymodeapplymove(int, int, int);
 static void copymodeclampbounds(void);
 static void copymodeclamp(void);
@@ -249,15 +274,24 @@ static char base64dec_getc(const char **);
 static ssize_t xwrite(int, const char *, size_t);
 
 /* Globals */
-static Term term;
-static Selection sel;
-static CopyMode copymode;
-static CSIEscape csiescseq;
-static STREscape strescseq;
+static Pane panes[2];
+static Pane *pane = &panes[0];
+static int paneidx;
+static int spliton;
+static int focuspane;
+static int splitcols, splitrows_total, splittw, splitth;
+static volatile sig_atomic_t childexited;
 static int iofd = 1;
-static int cmdfd;
-static pid_t pid;
+static char *splitshell;
 int disableda = 0;
+
+#define term       (pane->t)
+#define sel        (pane->selection)
+#define copymode   (pane->cm)
+#define csiescseq  (pane->csi)
+#define strescseq  (pane->str)
+#define cmdfd      (pane->fd)
+#define pid        (pane->child)
 
 static const uchar utfbyte[UTF_SIZ + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
 static const uchar utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
@@ -310,6 +344,187 @@ xstrdup(const char *s)
 		die("strdup: %s\n", strerror(errno));
 
 	return p;
+}
+
+static void
+paneactivate(int n)
+{
+	if (!BETWEEN(n, 0, (int)LEN(panes) - 1))
+		return;
+	pane = &panes[n];
+	paneidx = n;
+}
+
+int
+splitactive(void)
+{
+	return paneidx;
+}
+
+int
+splitfocused(void)
+{
+	return focuspane;
+}
+
+static int
+splitisactive(int n)
+{
+	return n == 0 || (spliton && panes[n].alive);
+}
+
+static void
+splitlayout(int rows, int *top, int *bottom)
+{
+	int avail;
+
+	*top = rows;
+	*bottom = 0;
+	if (rows < 3)
+		return;
+	avail = rows - 1;
+	*top = avail / 2;
+	if (*top < 1)
+		*top = 1;
+	*bottom = avail - *top;
+	if (*bottom < 1) {
+		*bottom = 1;
+		*top = avail - 1;
+	}
+}
+
+static int
+splitcellh(void)
+{
+	return splitrows_total > 0 ? splitth / splitrows_total : 0;
+}
+
+static int
+splitpaneh(int rows)
+{
+	int ch = splitcellh();
+	return ch > 0 ? ch * rows : splitth;
+}
+
+static void
+splitcwd(char *buf, size_t siz)
+{
+#ifdef __linux__
+	char path[64];
+	ssize_t n;
+	pid_t fg;
+#endif
+
+	if (!siz)
+		return;
+	buf[0] = '\0';
+#ifdef __linux__
+	if (cmdfd >= 0 && (fg = tcgetpgrp(cmdfd)) > 0) {
+		snprintf(path, sizeof path, "/proc/%ld/cwd", (long)fg);
+		if ((n = readlink(path, buf, siz - 1)) >= 0) {
+			buf[n] = '\0';
+			return;
+		}
+	}
+#endif
+	if (getcwd(buf, siz) == NULL)
+		buf[0] = '\0';
+}
+
+static void
+termfree(void)
+{
+	int i;
+
+	if (term.line) {
+		for (i = 0; i < term.row; i++) {
+			free(term.line[i]);
+			free(term.alt[i]);
+		}
+	}
+	free(term.line);
+	free(term.alt);
+	free(term.dirty);
+	free(term.tabs);
+	for (i = 0; i < HISTSIZE; i++)
+		free(term.hist[i]);
+	free(strescseq.buf);
+	memset(&term, 0, sizeof term);
+	memset(&sel, 0, sizeof sel);
+	memset(&copymode, 0, sizeof copymode);
+	memset(&csiescseq, 0, sizeof csiescseq);
+	memset(&strescseq, 0, sizeof strescseq);
+	memset(pane->saved, 0, sizeof pane->saved);
+	pane->rbuflen = 0;
+	pane->cwd[0] = '\0';
+}
+
+static void
+splitfulldirt(void)
+{
+	int i, old = paneidx;
+
+	for (i = 0; i < LEN(panes); i++) {
+		if (!splitisactive(i))
+			continue;
+		paneactivate(i);
+		tfulldirt();
+	}
+	paneactivate(old);
+}
+
+static void
+splitsetfocus(int n)
+{
+	int old;
+
+	if (!splitisactive(n))
+		return;
+	old = focuspane;
+	focuspane = n;
+	paneactivate(n);
+	if (old != focuspane) {
+		xcursorclear();
+		splitfulldirt();
+	}
+}
+
+void
+splitfocus(const Arg *arg)
+{
+	int n = arg->i;
+
+	if (!spliton)
+		return;
+	if (n < 0)
+		n = focuspane ? 0 : 1;
+	splitsetfocus(n);
+	draw();
+}
+
+int
+splitrowoff(void)
+{
+	return pane->yoff;
+}
+
+int
+splitrow(int row)
+{
+	row -= pane->yoff;
+	LIMIT(row, 0, MAX(term.row - 1, 0));
+	return row;
+}
+
+void
+splitfocusrow(int row)
+{
+	if (spliton && panes[1].alive && row == panes[1].yoff - 1)
+		return;
+	if (spliton && panes[1].alive && row >= panes[1].yoff)
+		splitsetfocus(1);
+	else
+		splitsetfocus(0);
 }
 
 size_t
@@ -1122,7 +1337,7 @@ execsh(char *cmd, char **args)
 	}
 
 	if ((sh = getenv("SHELL")) == NULL)
-		sh = (pw->pw_shell[0]) ? pw->pw_shell : cmd;
+		sh = (pw->pw_shell[0]) ? pw->pw_shell : (cmd ? cmd : "/bin/sh");
 
 	if (args) {
 		prog = args[0];
@@ -1162,20 +1377,35 @@ execsh(char *cmd, char **args)
 void
 sigchld(int a)
 {
-	int stat;
+	childexited = 1;
+}
+
+void
+ttyreap(void)
+{
+	int i, stat;
 	pid_t p;
 
-	if ((p = waitpid(pid, &stat, WNOHANG)) < 0)
-		die("waiting for pid %hd failed: %s\n", pid, strerror(errno));
-
-	if (pid != p)
+	if (!childexited)
 		return;
-
-	if (WIFEXITED(stat) && WEXITSTATUS(stat))
-		die("child exited with status %d\n", WEXITSTATUS(stat));
-	else if (WIFSIGNALED(stat))
-		die("child terminated due to signal %d\n", WTERMSIG(stat));
-	_exit(0);
+	childexited = 0;
+	while ((p = waitpid(-1, &stat, WNOHANG)) > 0) {
+		for (i = 0; i < LEN(panes); i++)
+			if (panes[i].child == p)
+				break;
+		if (i == LEN(panes))
+			continue;
+		if (i == 0) {
+			ttyhangup();
+			if (WIFEXITED(stat) && WEXITSTATUS(stat))
+				die("child exited with status %d\n", WEXITSTATUS(stat));
+			else if (WIFSIGNALED(stat))
+				die("child terminated due to signal %d\n", WTERMSIG(stat));
+			exit(0);
+		}
+		panes[i].child = 0;
+		splitclose();
+	}
 }
 
 void
@@ -1207,6 +1437,8 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 {
 	int m, s;
 
+	if (cmd && !splitshell)
+		splitshell = cmd;
 	if (out) {
 		term.mode |= MODE_PRINT;
 		iofd = (!strcmp(out, "-")) ?
@@ -1245,6 +1477,8 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 			die("ioctl TIOCSCTTY failed: %s\n", strerror(errno));
 		if (s > 2)
 			close(s);
+		if (pane->cwd[0] && chdir(pane->cwd) < 0)
+			perror("Couldn't chdir for split pane");
 #ifdef __OpenBSD__
 		if (pledge("stdio getpw proc exec", NULL) == -1)
 			die("pledge\n");
@@ -1267,25 +1501,27 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 size_t
 ttyread(void)
 {
-	static char buf[BUFSIZ];
-	static int buflen = 0;
 	int ret, written;
 
 	/* append read bytes to unprocessed bytes */
-	ret = read(cmdfd, buf+buflen, LEN(buf)-buflen);
+	ret = read(cmdfd, pane->rbuf + pane->rbuflen,
+	           LEN(pane->rbuf) - pane->rbuflen);
 
 	switch (ret) {
 	case 0:
-		exit(0);
+		if (paneidx == 0)
+			exit(0);
+		splitclose();
+		return 0;
 	case -1:
 		die("couldn't read from shell: %s\n", strerror(errno));
 	default:
-		buflen += ret;
-		written = twrite(buf, buflen, 0);
-		buflen -= written;
+		pane->rbuflen += ret;
+		written = twrite(pane->rbuf, pane->rbuflen, 0);
+		pane->rbuflen -= written;
 		/* keep any incomplete UTF-8 byte sequence for the next call */
-		if (buflen > 0)
-			memmove(buf, buf + written, buflen);
+		if (pane->rbuflen > 0)
+			memmove(pane->rbuf, pane->rbuf + written, pane->rbuflen);
 		return ret;
 	}
 }
@@ -1383,6 +1619,8 @@ ttyresize(int tw, int th)
 {
 	struct winsize w;
 
+	if (cmdfd < 0)
+		return;
 	w.ws_row = term.row;
 	w.ws_col = term.col;
 	w.ws_xpixel = tw;
@@ -1394,12 +1632,182 @@ ttyresize(int tw, int th)
 void
 ttyhangup(void)
 {
-	/* Send SIGHUP to shell */
-	kill(pid, SIGHUP);
+	int i;
+
+	/* Send SIGHUP to all live shells. */
+	for (i = 0; i < LEN(panes); i++)
+		if (panes[i].alive && panes[i].child > 0)
+			kill(panes[i].child, SIGHUP);
+}
+
+static void
+splitupdatelayout(void)
+{
+	int top, bottom, old = paneidx;
+
+	if (splitrows_total < 1 || splitcols < 1)
+		return;
+	if (spliton && splitrows_total < 3)
+		splitclose();
+
+	splitlayout(splitrows_total, &top, &bottom);
+	if (!spliton) {
+		focuspane = 0;
+		panes[0].yoff = 0;
+		panes[0].rows = splitrows_total;
+		paneactivate(0);
+		tresize(splitcols, splitrows_total);
+		ttyresize(splittw, splitth);
+		paneactivate(splitisactive(old) ? old : focuspane);
+		return;
+	}
+
+	panes[0].yoff = 0;
+	panes[0].rows = top;
+	paneactivate(0);
+	tresize(splitcols, top);
+	ttyresize(splittw, splitpaneh(top));
+
+	if (panes[1].alive) {
+		panes[1].yoff = top + 1;
+		panes[1].rows = bottom;
+		paneactivate(1);
+		tresize(splitcols, bottom);
+		ttyresize(splittw, splitpaneh(bottom));
+	}
+	if (!splitisactive(focuspane))
+		focuspane = 0;
+	paneactivate(focuspane);
+	splitfulldirt();
+}
+
+void
+splitresize(int col, int row, int tw, int th)
+{
+	splitcols = col;
+	splitrows_total = row;
+	splittw = tw;
+	splitth = th;
+	panes[0].alive = 1;
+	splitupdatelayout();
+}
+
+static void
+splitspawn(void)
+{
+	char cwd[PATH_MAX];
+	int top, bottom, old = paneidx;
+
+	if (spliton || splitrows_total < 3)
+		return;
+
+	splitcwd(cwd, sizeof cwd);
+	splitlayout(splitrows_total, &top, &bottom);
+	spliton = 1;
+
+	panes[0].yoff = 0;
+	panes[0].rows = top;
+	paneactivate(0);
+	tresize(splitcols, top);
+	ttyresize(splittw, splitpaneh(top));
+
+	paneactivate(1);
+	if (term.line)
+		termfree();
+	memset(pane, 0, sizeof *pane);
+	pane->fd = -1;
+	pane->alive = 1;
+	pane->yoff = top + 1;
+	pane->rows = bottom;
+	if (cwd[0])
+		snprintf(pane->cwd, sizeof pane->cwd, "%s", cwd);
+	tnew(splitcols, bottom);
+	selinit();
+	ttynew(NULL, splitshell, NULL, NULL);
+	ttyresize(splittw, splitpaneh(bottom));
+
+	paneactivate(old);
+	splitsetfocus(1);
+}
+
+static void
+splitclose(void)
+{
+	int old = paneidx;
+
+	if (!spliton && !panes[1].alive)
+		return;
+
+	paneactivate(1);
+	if (pane->child > 0)
+		kill(pane->child, SIGHUP);
+	if (pane->fd >= 0)
+		close(pane->fd);
+	termfree();
+	memset(pane, 0, sizeof *pane);
+	pane->fd = -1;
+	pane->alive = 0;
+
+	spliton = 0;
+	paneactivate(0);
+	panes[0].yoff = 0;
+	panes[0].rows = splitrows_total;
+	if (splitrows_total > 0 && splitcols > 0) {
+		tresize(splitcols, splitrows_total);
+		ttyresize(splittw, splitth);
+	}
+	tfulldirt();
+	paneactivate(old == 1 ? 0 : old);
+	splitsetfocus(0);
+}
+
+void
+splittoggle(const Arg *arg)
+{
+	if (spliton)
+		splitclose();
+	else
+		splitspawn();
+	draw();
 }
 
 int
-tattrset(int attr)
+ttyfdset(fd_set *rfd)
+{
+	int i, maxfd = -1;
+
+	for (i = 0; i < LEN(panes); i++) {
+		if (!splitisactive(i) || panes[i].fd < 0)
+			continue;
+		FD_SET(panes[i].fd, rfd);
+		maxfd = MAX(maxfd, panes[i].fd);
+	}
+	return maxfd;
+}
+
+int
+ttyreadfds(fd_set *rfd)
+{
+	int i, old = paneidx, got = 0;
+
+	for (i = 0; i < LEN(panes); i++) {
+		if (!splitisactive(i) || panes[i].fd < 0 ||
+		    !FD_ISSET(panes[i].fd, rfd))
+			continue;
+		paneactivate(i);
+		xsetpanemode(i);
+		ttyread();
+		got = 1;
+	}
+	if (!splitisactive(focuspane))
+		focuspane = 0;
+	paneactivate(splitisactive(old) ? old : focuspane);
+	xsetpanemode(focuspane);
+	return got;
+}
+
+static int
+tattrsetpane(int attr)
 {
 	int i, j;
 
@@ -1411,6 +1819,24 @@ tattrset(int attr)
 	}
 
 	return 0;
+}
+
+int
+tattrset(int attr)
+{
+	int i, old = paneidx, found = 0;
+
+	for (i = 0; i < LEN(panes); i++) {
+		if (!splitisactive(i))
+			continue;
+		paneactivate(i);
+		if (tattrsetpane(attr)) {
+			found = 1;
+			break;
+		}
+	}
+	paneactivate(old);
+	return found;
 }
 
 void
@@ -1428,8 +1854,8 @@ tsetdirt(int top, int bot)
 		term.dirty[i] = 1;
 }
 
-void
-tsetdirtattr(int attr)
+static void
+tsetdirtattrpane(int attr)
 {
 	int i, j;
 
@@ -1444,6 +1870,20 @@ tsetdirtattr(int attr)
 }
 
 void
+tsetdirtattr(int attr)
+{
+	int i, old = paneidx;
+
+	for (i = 0; i < LEN(panes); i++) {
+		if (!splitisactive(i))
+			continue;
+		paneactivate(i);
+		tsetdirtattrpane(attr);
+	}
+	paneactivate(old);
+}
+
+void
 tfulldirt(void)
 {
 	tsetdirt(0, term.row-1);
@@ -1452,14 +1892,13 @@ tfulldirt(void)
 void
 tcursor(int mode)
 {
-	static TCursor c[2];
 	int alt = IS_SET(MODE_ALTSCREEN);
 
 	if (mode == CURSOR_SAVE) {
-		c[alt] = term.c;
+		pane->saved[alt] = term.c;
 	} else if (mode == CURSOR_LOAD) {
-		term.c = c[alt];
-		tmoveto(c[alt].x, c[alt].y);
+		term.c = pane->saved[alt];
+		tmoveto(pane->saved[alt].x, pane->saved[alt].y);
 	}
 }
 
@@ -1496,7 +1935,10 @@ tnew(int col, int row)
 {
 	int i, j;
 
+	if (term.line)
+		termfree();
 	term = (Term){ .c = { .attr = { .fg = defaultfg, .bg = defaultbg } } };
+	pane->alive = 1;
 	for (i = 0; i < HISTSIZE; i++) {
 		term.hist[i] = xmalloc(col * sizeof(Glyph));
 		for (j = 0; j < col; j++) {
@@ -3294,44 +3736,70 @@ drawregion(int x1, int y1, int x2, int y2)
 void
 draw(void)
 {
-	int cx = term.c.x, ocx = term.ocx, ocy = term.ocy;
+	int i, cx, ocx, ocy, old = paneidx, ime = 0;
 
 	if (!xstartdraw())
 		return;
 
-	drawregion(0, 0, term.col, term.row);
-	if (copymode.active) {
-		int cox = copymode.ox, coy = copymode.oy;
+	for (i = 0; i < LEN(panes); i++) {
+		if (!splitisactive(i))
+			continue;
+		paneactivate(i);
+		xsetpanemode(i);
+		xsetrowoff(pane->yoff);
+		cx = term.c.x;
+		ocx = term.ocx;
+		ocy = term.ocy;
 
-		LIMIT(cox, 0, term.col - 1);
-		LIMIT(coy, 0, term.row - 1);
-		copymodeclamp();
-		copymodefixwide(&cox, coy);
-		copymodefixwide(&copymode.x, copymode.y);
-		xdrawcursor(copymode.x, copymode.y, TLINE(copymode.y)[copymode.x],
-			    cox, coy, TLINE(coy)[cox]);
-		copymode.ox = copymode.x;
-		copymode.oy = copymode.y;
-	} else if (term.scr == 0) {
-		/* adjust cursor position */
-		LIMIT(term.ocx, 0, term.col-1);
-		LIMIT(term.ocy, 0, term.row-1);
-		linefixwide(term.line[term.ocy], &term.ocx);
-		linefixwide(term.line[term.c.y], &cx);
+		drawregion(0, 0, term.col, term.row);
+		if (i != focuspane)
+			continue;
+		if (copymode.active) {
+			int cox = copymode.ox, coy = copymode.oy;
 
-		xdrawcursor(cx, term.c.y, term.line[term.c.y][cx],
-			    term.ocx, term.ocy, term.line[term.ocy][term.ocx]);
-		term.ocx = cx;
-		term.ocy = term.c.y;
+			LIMIT(cox, 0, term.col - 1);
+			LIMIT(coy, 0, term.row - 1);
+			copymodeclamp();
+			copymodefixwide(&cox, coy);
+			copymodefixwide(&copymode.x, copymode.y);
+			xdrawcursor(copymode.x, copymode.y,
+				    TLINE(copymode.y)[copymode.x],
+				    cox, coy, TLINE(coy)[cox]);
+			copymode.ox = copymode.x;
+			copymode.oy = copymode.y;
+		} else if (term.scr == 0) {
+			/* adjust cursor position */
+			LIMIT(term.ocx, 0, term.col-1);
+			LIMIT(term.ocy, 0, term.row-1);
+			linefixwide(term.line[term.ocy], &term.ocx);
+			linefixwide(term.line[term.c.y], &cx);
+
+			xdrawcursor(cx, term.c.y, term.line[term.c.y][cx],
+				    term.ocx, term.ocy,
+				    term.line[term.ocy][term.ocx]);
+			term.ocx = cx;
+			term.ocy = term.c.y;
+		}
+		if (!copymode.active && term.scr == 0 &&
+		    (ocx != term.ocx || ocy != term.ocy))
+			ime = 1;
 	}
+	if (spliton && panes[1].alive)
+		xdrawseparator(panes[1].yoff - 1);
+	paneactivate(focuspane);
+	xsetpanemode(focuspane);
+	xsetrowoff(pane->yoff);
 	xfinishdraw();
-	if (!copymode.active && term.scr == 0 && (ocx != term.ocx || ocy != term.ocy))
+	if (ime)
 		xximspot(term.ocx, term.ocy);
+	paneactivate(splitisactive(old) ? old : focuspane);
+	xsetpanemode(paneidx);
+	xsetrowoff(pane->yoff);
 }
 
 void
 redraw(void)
 {
-	tfulldirt();
+	splitfulldirt();
 	draw();
 }
