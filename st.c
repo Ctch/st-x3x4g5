@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/types.h>
@@ -240,9 +241,15 @@ static void linefixwide(Line, int *);
 
 static void drawregion(int, int, int, int);
 static void splitclose(void);
+static void splitclear(void);
 static void splitfulldirt(void);
 static int splitisactive(int);
 static void splitlayout(int, int *, int *);
+static int splitrunoscallowed(void);
+static void splitrunoscclear(void);
+static void splitrunosc(const char *);
+static void splitrunoscarm(int);
+static void splitruntext(const char *);
 static void splitsetfocus(int);
 static void splitspawn(void);
 static void splitupdatelayout(void);
@@ -281,6 +288,8 @@ static int spliton;
 static int focuspane;
 static int splitcols, splitrows_total, splittw, splitth;
 static int splittoprows;
+static int splitrunoscpane = -1;
+static time_t splitrunoscdeadline;
 static volatile sig_atomic_t childexited;
 static int iofd = 1;
 static char *splitshell;
@@ -511,6 +520,119 @@ splitadjust(const Arg *arg)
 	LIMIT(splittoprows, 1, avail - 1);
 	splitupdatelayout();
 	xcursorclear();
+	draw();
+}
+
+static void
+splitclear(void)
+{
+	int old = paneidx;
+
+	if (!spliton || !panes[1].alive)
+		return;
+
+	paneactivate(1);
+	xsetpanemode(1);
+	ttywrite("\014", 1, 1);
+
+	paneactivate(splitisactive(old) ? old : focuspane);
+	xsetpanemode(paneidx);
+	xsetrowoff(pane->yoff);
+}
+
+static void
+splitruntext(const char *text)
+{
+	int old = paneidx;
+
+	if (!spliton || !panes[1].alive || text == NULL || text[0] == '\0')
+		return;
+
+	paneactivate(1);
+	xsetpanemode(1);
+	ttywrite(text, strlen(text), 1);
+	ttywrite("\r", 1, 1);
+
+	paneactivate(splitisactive(old) ? old : focuspane);
+	xsetpanemode(paneidx);
+	xsetrowoff(pane->yoff);
+}
+
+static void
+splitrunoscarm(int n)
+{
+	splitrunoscpane = n;
+	splitrunoscdeadline = time(NULL) + 2;
+}
+
+static int
+splitrunoscallowed(void)
+{
+	if (splitrunoscpane != paneidx || time(NULL) > splitrunoscdeadline) {
+		splitrunoscpane = -1;
+		return 0;
+	}
+	splitrunoscpane = -1;
+	return 1;
+}
+
+static void
+splitrunoscclear(void)
+{
+	if (splitrunoscallowed())
+		splitclear();
+}
+
+static void
+splitrunosc(const char *text64)
+{
+	char *text;
+
+	if (text64 == NULL)
+		return;
+	if (!splitrunoscallowed())
+		return;
+
+	if ((text = base64dec(text64)) == NULL)
+		return;
+	splitruntext(text);
+	free(text);
+}
+
+void
+splitrunselection(const Arg *arg)
+{
+	char *seltext;
+	int old = paneidx;
+
+	if (!spliton || !panes[1].alive) {
+		splitspawn();
+		if (splitisactive(old))
+			splitsetfocus(old);
+		draw();
+		return;
+	}
+
+	paneactivate(0);
+	seltext = getsel();
+	if (seltext == NULL || seltext[0] == '\0') {
+		free(seltext);
+		if (focuspane == 0 && !copymode.active && IS_SET(MODE_ALTSCREEN)) {
+			splitrunoscarm(0);
+			ttywrite("\033o", 2, 1);
+		} else {
+			splitclear();
+		}
+		goto restore;
+	}
+
+	splitruntext(seltext);
+	free(seltext);
+
+restore:
+	paneactivate(splitisactive(old) ? old : focuspane);
+	xsetpanemode(paneidx);
+	xsetrowoff(pane->yoff);
 	draw();
 }
 
@@ -2974,6 +3096,12 @@ strhandle(void)
 					fprintf(stderr, "erresc: invalid base64\n");
 				}
 			}
+			return;
+		case 777: /* private split-run command */
+			if (narg > 2 && !strcmp(strescseq.args[1], "split-run"))
+				splitrunosc(strescseq.args[2]);
+			else if (narg > 1 && !strcmp(strescseq.args[1], "split-clear"))
+				splitrunoscclear();
 			return;
 		case 10: /* set dynamic VT100 text foreground color */
 		case 11: /* set dynamic VT100 text background color */

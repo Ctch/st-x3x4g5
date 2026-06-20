@@ -291,6 +291,7 @@ static Shortcut shortcuts[] = {
     {MODKEY, XK_j, splitfocus, {.i = 1}},
     {MODKEY, XK_Up, splitadjust, {.i = -1}},
     {MODKEY, XK_Down, splitadjust, {.i = +1}},
+    {MODKEY, XK_o, splitrunselection, {.i = 0}},
     {TERMMOD, XK_Prior, zoom, {.f = +1}},
     {TERMMOD, XK_Next, zoom, {.f = -1}},
     {TERMMOD, XK_Home, zoomreset, {.f = 0}},

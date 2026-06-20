@@ -119,6 +119,7 @@ void printsel(const Arg *);
 void sendbreak(const Arg *);
 void splitadjust(const Arg *);
 void splitfocus(const Arg *);
+void splitrunselection(const Arg *);
 void splittoggle(const Arg *);
 void toggleprinter(const Arg *);
 
