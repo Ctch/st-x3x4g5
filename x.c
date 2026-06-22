@@ -2572,6 +2572,25 @@ xstartdraw(void)
 }
 
 void
+xcopypanestate(int dst, int src)
+{
+	if (!BETWEEN(dst, 0, (int)LEN(panemode) - 1) ||
+	    !BETWEEN(src, 0, (int)LEN(panemode) - 1))
+		return;
+	panemode[dst] = panemode[src];
+	panecursor[dst] = panecursor[src];
+}
+
+void
+xresetpanestate(int n)
+{
+	if (!BETWEEN(n, 0, (int)LEN(panemode) - 1))
+		return;
+	panemode[n] = 0;
+	panecursor[n] = -1;
+}
+
+void
 xsetpanemode(int n)
 {
 	if (!BETWEEN(n, 0, (int)LEN(panemode) - 1))

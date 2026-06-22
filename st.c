@@ -188,6 +188,7 @@ typedef struct {
 static void execsh(char *, char **);
 static void stty(char **);
 static void sigchld(int);
+static void ttyeof(int);
 static void ttywriteraw(const char *, size_t);
 static void termfree(void);
 
@@ -241,7 +242,9 @@ static void linefixwide(Line, int *);
 
 static void drawregion(int, int, int, int);
 static void splitclose(void);
+static void splitclosepane(int);
 static void splitclear(void);
+static void splitfreepane(int, int);
 static void splitfulldirt(void);
 static int splitisactive(int);
 static void splitlayout(int, int *, int *);
@@ -252,6 +255,7 @@ static void splitrunoscarm(int);
 static void splitruntext(const char *);
 static void splitsetfocus(int);
 static void splitspawn(void);
+static int splitpromote(void);
 static void splitupdatelayout(void);
 static void copymodeapplymove(int, int, int);
 static void copymodeclampbounds(void);
@@ -1532,6 +1536,8 @@ ttyreap(void)
 		if (i == LEN(panes))
 			continue;
 		if (i == 0) {
+			if (splitpromote())
+				continue;
 			ttyhangup();
 			if (WIFEXITED(stat) && WEXITSTATUS(stat))
 				die("child exited with status %d\n", WEXITSTATUS(stat));
@@ -1540,8 +1546,23 @@ ttyreap(void)
 			exit(0);
 		}
 		panes[i].child = 0;
-		splitclose();
+		splitclosepane(0);
 	}
+}
+
+static void
+ttyeof(int n)
+{
+	if (panes[n].child > 0) {
+		childexited = 1;
+		return;
+	}
+	if (n == 0) {
+		if (!splitpromote())
+			exit(0);
+		return;
+	}
+	splitclosepane(0);
 }
 
 void
@@ -1641,7 +1662,7 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 size_t
 ttyread(void)
 {
-	int ret, written;
+	int n = paneidx, ret, written;
 
 	/* append read bytes to unprocessed bytes */
 	ret = read(cmdfd, pane->rbuf + pane->rbuflen,
@@ -1649,11 +1670,13 @@ ttyread(void)
 
 	switch (ret) {
 	case 0:
-		if (paneidx == 0)
-			exit(0);
-		splitclose();
+		ttyeof(n);
 		return 0;
 	case -1:
+		if (errno == EIO) {
+			ttyeof(n);
+			return 0;
+		}
 		die("couldn't read from shell: %s\n", strerror(errno));
 	default:
 		pane->rbuflen += ret;
@@ -1854,6 +1877,7 @@ splitspawn(void)
 	ttyresize(splittw, splitpaneh(top));
 
 	paneactivate(1);
+	xresetpanestate(1);
 	if (term.line)
 		termfree();
 	memset(pane, 0, sizeof *pane);
@@ -1875,20 +1899,19 @@ splitspawn(void)
 static void
 splitclose(void)
 {
+	splitclosepane(1);
+}
+
+static void
+splitclosepane(int hangup)
+{
 	int old = paneidx;
 
 	if (!spliton && !panes[1].alive)
 		return;
 
-	paneactivate(1);
-	if (pane->child > 0)
-		kill(pane->child, SIGHUP);
-	if (pane->fd >= 0)
-		close(pane->fd);
-	termfree();
-	memset(pane, 0, sizeof *pane);
-	pane->fd = -1;
-	pane->alive = 0;
+	splitfreepane(1, hangup);
+	xresetpanestate(1);
 
 	spliton = 0;
 	splittoprows = 0;
@@ -1902,6 +1925,54 @@ splitclose(void)
 	tfulldirt();
 	paneactivate(old == 1 ? 0 : old);
 	splitsetfocus(0);
+	xsetpanemode(0);
+	xcursorclear();
+}
+
+static void
+splitfreepane(int n, int hangup)
+{
+	paneactivate(n);
+	if (hangup && pane->child > 0)
+		kill(pane->child, SIGHUP);
+	if (pane->fd >= 0)
+		close(pane->fd);
+	termfree();
+	memset(pane, 0, sizeof *pane);
+	pane->fd = -1;
+}
+
+static int
+splitpromote(void)
+{
+	Pane promoted;
+
+	if (!spliton || !panes[1].alive)
+		return 0;
+
+	promoted = panes[1];
+	memset(&panes[1], 0, sizeof panes[1]);
+	panes[1].fd = -1;
+
+	xcopypanestate(0, 1);
+	xresetpanestate(1);
+	splitfreepane(0, 0);
+	panes[0] = promoted;
+
+	spliton = 0;
+	splittoprows = 0;
+	paneactivate(0);
+	pane->yoff = 0;
+	pane->rows = splitrows_total;
+	if (splitrows_total > 0 && splitcols > 0) {
+		tresize(splitcols, splitrows_total);
+		ttyresize(splittw, splitth);
+	}
+	tfulldirt();
+	splitsetfocus(0);
+	xsetpanemode(0);
+	xcursorclear();
+	return 1;
 }
 
 void

@@ -30,6 +30,8 @@ void xdrawcursor(int, int, Glyph, int, int, Glyph);
 void xdrawline(Line, int, int, int);
 void xdrawseparator(int);
 void xfinishdraw(void);
+void xcopypanestate(int, int);
+void xresetpanestate(int);
 void xsetpanemode(int);
 void xsetrowoff(int);
 void xloadcols(void);
