@@ -268,6 +268,7 @@ static void copymodeupdate(void);
 
 static void selnormalize(void);
 static void selscroll(int, int);
+static int selvalidy(int);
 static void selsnap(int *, int *, int);
 
 static size_t utf8decode(const char *, Rune *, size_t);
@@ -1051,7 +1052,7 @@ kscrolldown(const Arg *arg)
 void
 kscrollup(const Arg *arg)
 {
-	int n;
+	int n, scr;
 
 	if (IS_SET(MODE_ALTSCREEN))
 		return;
@@ -1063,8 +1064,9 @@ kscrollup(const Arg *arg)
 		n = 1;
 
 	if (term.scr < term.histlen) {
+		scr = term.scr;
 		term.scr = MIN(term.scr + n, term.histlen);
-		selscroll(0, n);
+		selscroll(0, term.scr - scr);
 		tfulldirt();
 	}
 }
@@ -2195,6 +2197,17 @@ selscroll(int orig, int n)
 	if (sel.ob.x == -1 || sel.alt != IS_SET(MODE_ALTSCREEN))
 		return;
 
+	if (copymode.active && copymode.selecting) {
+		sel.ob.y += n;
+		sel.oe.y += n;
+		if (!selvalidy(sel.ob.y) || !selvalidy(sel.oe.y)) {
+			selclear();
+		} else {
+			selnormalize();
+		}
+		return;
+	}
+
 	if (BETWEEN(sel.nb.y, orig, term.bot) != BETWEEN(sel.ne.y, orig, term.bot)) {
 		selclear();
 	} else if (BETWEEN(sel.nb.y, orig, term.bot)) {
@@ -2207,6 +2220,12 @@ selscroll(int orig, int n)
 			selnormalize();
 		}
 	}
+}
+
+static int
+selvalidy(int y)
+{
+	return BETWEEN(y, term.scr - term.histlen, term.scr + term.row - 1);
 }
 
 void
