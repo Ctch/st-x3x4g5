@@ -300,6 +300,7 @@ static Shortcut shortcuts[] = {
     {TERMMOD, XK_Y, selpaste, {.i = 0}},
     {ShiftMask, XK_Insert, selpaste, {.i = 0}},
     {TERMMOD, XK_Num_Lock, numlock, {.i = 0}},
+    {TERMMOD, XK_F12, keyboardreset, {.i = 0}},
 };
 
 static Shortcut selshortcuts[] = {

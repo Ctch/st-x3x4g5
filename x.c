@@ -55,6 +55,7 @@ static void clipcopy(const Arg *);
 static void clippaste(const Arg *);
 static void numlock(const Arg *);
 static void kbdselyank(const Arg *);
+static void keyboardreset(const Arg *);
 static void selpaste(const Arg *);
 static void zoom(const Arg *);
 static void zoomabs(const Arg *);
@@ -175,6 +176,9 @@ static void xseturgency(int);
 static Cursor xcreatehiddencursor(void);
 static void xsetpointercursor(int);
 static void xupdatepointermotion(void);
+static int csiencodekey(XKeyEvent *, KeySym, char *, size_t);
+static unsigned int csiumodifiers(unsigned int);
+static int keysymascii(KeySym, unsigned int *);
 static int evcol(XEvent *);
 static int evrow(XEvent *);
 
@@ -409,6 +413,13 @@ void
 ttysend(const Arg *arg)
 {
 	ttywrite(arg->s, strlen(arg->s), 1);
+}
+
+void
+keyboardreset(const Arg *arg)
+{
+	(void)arg;
+	tkeyboardreset();
 }
 
 Cursor
@@ -2813,13 +2824,72 @@ kmap(KeySym k, uint state)
 	return NULL;
 }
 
+static unsigned int
+csiumodifiers(unsigned int state)
+{
+	unsigned int modifiers = 0;
+
+	if (state & ShiftMask)
+		modifiers |= 1;
+	if (state & Mod1Mask)
+		modifiers |= 2;
+	if (state & ControlMask)
+		modifiers |= 4;
+	if (state & Mod4Mask)
+		modifiers |= 8;
+	return 1 + modifiers;
+}
+
+static int
+keysymascii(KeySym sym, unsigned int *code)
+{
+	if (sym >= XK_A && sym <= XK_Z)
+		sym += XK_a - XK_A;
+	if (sym < XK_space || sym > XK_asciitilde)
+		return 0;
+	*code = sym;
+	return 1;
+}
+
+static int
+csiencodekey(XKeyEvent *e, KeySym sym, char *buf, size_t size)
+{
+	KeySym base;
+	unsigned int code, modifiers;
+	int group, len;
+
+	if (!(tkeyboardflags() & KBD_DISAMBIGUATE))
+		return 0;
+	if (sym == XK_Return || sym == XK_KP_Enter || sym == XK_Tab ||
+	    sym == XK_ISO_Left_Tab || sym == XK_BackSpace)
+		return 0;
+
+	if (sym == XK_Escape) {
+		code = 27;
+	} else {
+		if (!(e->state & (Mod1Mask | ControlMask)))
+			return 0;
+		group = XkbGroupForCoreState(e->state);
+		base = XkbKeycodeToKeysym(xw.dpy, e->keycode, group, 0);
+		if (base == NoSymbol || !keysymascii(base, &code))
+			return 0;
+	}
+
+	modifiers = csiumodifiers(e->state);
+	if (modifiers == 1)
+		len = snprintf(buf, size, "\033[%uu", code);
+	else
+		len = snprintf(buf, size, "\033[%u;%uu", code, modifiers);
+	return len > 0 && (size_t)len < size ? len : 0;
+}
+
 void
 kpress(XEvent *ev)
 {
 	XKeyEvent *e = &ev->xkey;
 	KeySym ksym = NoSymbol;
 	char buf[64], *customkey;
-	int len;
+	int encoded, len;
 	Rune c;
 	Status status;
 	Shortcut *bp;
@@ -2874,7 +2944,14 @@ kpress(XEvent *ev)
 		return;
 	}
 
-	/* 5. composed string from input method */
+	/* 5. negotiated CSI u encoding for unambiguous key events */
+	if ((len <= 1 || ksym == XK_Escape) &&
+	    (encoded = csiencodekey(e, ksym, buf, sizeof buf)) > 0) {
+		ttywrite(buf, encoded, 1);
+		return;
+	}
+
+	/* 6. composed string from input method */
 	if (len == 0)
 		return;
 	if (len == 1 && e->state & Mod1Mask) {
