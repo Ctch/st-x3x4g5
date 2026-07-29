@@ -39,6 +39,14 @@ enum glyph_attribute {
 	ATTR_BOLD_FAINT = ATTR_BOLD | ATTR_FAINT,
 };
 
+enum keyboard_flags {
+	KBD_DISAMBIGUATE    = 1u << 0,
+	KBD_REPORT_EVENTS   = 1u << 1,
+	KBD_ALTERNATE_KEYS  = 1u << 2,
+	KBD_ALL_KEYS        = 1u << 3,
+	KBD_ASSOCIATED_TEXT = 1u << 4,
+};
+
 enum drawing_mode {
     DRAW_NONE = 0,
     DRAW_BG = 1 << 0,
@@ -135,6 +143,8 @@ int ttyreadfds(fd_set *);
 size_t ttyread(void);
 void ttyresize(int, int);
 void ttywrite(const char *, size_t, int);
+unsigned int tkeyboardflags(void);
+void tkeyboardreset(void);
 
 #ifdef DEBUG_WIDE
 int tdebugwidewrite(const char *, int);

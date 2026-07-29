@@ -39,6 +39,8 @@
 #define ESC_ARG_SIZ   16
 #define STR_BUF_SIZ   ESC_BUF_SIZ
 #define STR_ARG_SIZ   ESC_ARG_SIZ
+#define KBD_STACK_SIZE 8
+#define KBD_SUPPORTED_FLAGS KBD_DISAMBIGUATE
 
 /* macros */
 #define IS_SET(flag)		((term.mode & (flag)) != 0)
@@ -100,6 +102,12 @@ typedef struct {
 } TCursor;
 
 typedef struct {
+	unsigned int flags;
+	unsigned int stack[KBD_STACK_SIZE];
+	size_t depth;
+} KeyboardState;
+
+typedef struct {
 	int mode;
 	int type;
 	int snap;
@@ -147,6 +155,7 @@ typedef struct {
 	int icharset; /* selected charset for sequence */
 	int *tabs;
 	Rune lastc;   /* last printed char outside of sequence, 0 if control */
+	KeyboardState kbd[2]; /* main and alternate screen keyboard modes */
 } Term;
 
 /* CSI Escape sequence structs */
@@ -220,6 +229,11 @@ static void tdeletechar(int);
 static void tdeleteline(int);
 static void tinsertblank(int);
 static void tinsertblankline(int);
+static void tkeyboardpop(unsigned int);
+static void tkeyboardpush(unsigned int);
+static void tkeyboardquery(void);
+static void tkeyboardset(unsigned int, unsigned int);
+static KeyboardState *tkeyboardstate(void);
 static int tlinelen(int);
 static void tmoveto(int, int);
 static void tmoveato(int, int);
@@ -2122,11 +2136,89 @@ tcursor(int mode)
 	}
 }
 
+static KeyboardState *
+tkeyboardstate(void)
+{
+	return &term.kbd[IS_SET(MODE_ALTSCREEN) ? 1 : 0];
+}
+
+unsigned int
+tkeyboardflags(void)
+{
+	return tkeyboardstate()->flags;
+}
+
+void
+tkeyboardreset(void)
+{
+	memset(term.kbd, 0, sizeof term.kbd);
+}
+
+static void
+tkeyboardquery(void)
+{
+	char buf[32];
+	int len;
+
+	len = snprintf(buf, sizeof buf, "\033[?%uu", tkeyboardflags());
+	if (len > 0 && (size_t)len < sizeof buf)
+		ttywrite(buf, len, 0);
+}
+
+static void
+tkeyboardpush(unsigned int flags)
+{
+	KeyboardState *kbd = tkeyboardstate();
+
+	if (kbd->depth == KBD_STACK_SIZE) {
+		memmove(kbd->stack, kbd->stack + 1,
+		        (KBD_STACK_SIZE - 1) * sizeof kbd->stack[0]);
+		kbd->depth--;
+	}
+	kbd->stack[kbd->depth++] = kbd->flags;
+	kbd->flags = flags & KBD_SUPPORTED_FLAGS;
+}
+
+static void
+tkeyboardpop(unsigned int count)
+{
+	KeyboardState *kbd = tkeyboardstate();
+
+	while (count > 0 && kbd->depth > 0) {
+		kbd->flags = kbd->stack[--kbd->depth];
+		count--;
+	}
+	if (count > 0) {
+		kbd->flags = 0;
+		kbd->depth = 0;
+	}
+}
+
+static void
+tkeyboardset(unsigned int flags, unsigned int mode)
+{
+	KeyboardState *kbd = tkeyboardstate();
+
+	flags &= KBD_SUPPORTED_FLAGS;
+	switch (mode) {
+	case 1:
+		kbd->flags = flags;
+		break;
+	case 2:
+		kbd->flags |= flags;
+		break;
+	case 3:
+		kbd->flags &= ~flags;
+		break;
+	}
+}
+
 void
 treset(void)
 {
 	uint i;
 
+	tkeyboardreset();
 	term.c = (TCursor){{
 		.mode = ATTR_NULL,
 		.fg = defaultfg,
@@ -2327,7 +2419,7 @@ csiparse(void)
 	int sep = ';'; /* colon or semi-colon, but not both */
 
 	csiescseq.narg = 0;
-	if (*p == '?' || *p == '>') {
+	if (*p == '?' || *p == '>' || *p == '<' || *p == '=') {
 		csiescseq.priv = *p;
 		p++;
 	}
@@ -3125,11 +3217,31 @@ csihandle(void)
 	case 's': /* DECSC -- Save cursor position (ANSI.SYS) */
 		tcursor(CURSOR_SAVE);
 		break;
-	case 'u': /* DECRC -- Restore cursor position (ANSI.SYS) */
-		if (csiescseq.priv) {
-			goto unknown;
-		} else {
+	case 'u':
+		switch (csiescseq.priv) {
+		case '\0': /* DECRC -- Restore cursor position (ANSI.SYS) */
 			tcursor(CURSOR_LOAD);
+			break;
+		case '?':
+			tkeyboardquery();
+			break;
+		case '>':
+			tkeyboardpush(csiescseq.arg[0] < 0 ? 0 :
+			              (unsigned int)csiescseq.arg[0]);
+			break;
+		case '<':
+			tkeyboardpop(csiescseq.len == 2 ? 1 :
+			             csiescseq.arg[0] < 0 ? 0 :
+			             (unsigned int)csiescseq.arg[0]);
+			break;
+		case '=':
+			tkeyboardset(csiescseq.arg[0] < 0 ? 0 :
+			             (unsigned int)csiescseq.arg[0],
+			             csiescseq.arg[1] ?
+			             (unsigned int)csiescseq.arg[1] : 1);
+			break;
+		default:
+			goto unknown;
 		}
 		break;
 	case ' ':
