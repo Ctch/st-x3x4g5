@@ -16,6 +16,7 @@ static XftDraw *xd;
 static Visual *xvis;
 
 static void drawbox(int, int, int, int, XftColor *, XftColor *, ushort);
+static void drawboxarc(int, int, int, int, XftColor *, ushort, int, int, int);
 static void drawboxlines(int, int, int, int, XftColor *, ushort);
 
 /* public API */
@@ -125,6 +126,82 @@ drawbox(int x, int y, int w, int h, XftColor *fg, XftColor *bg, ushort bd)
 }
 
 void
+drawboxarc(int x, int y, int w, int h, XftColor *fg, ushort bd, int s,
+           int w2, int h2)
+{
+	int px, py, run;
+	int maxr = MIN(MIN(w2 + s - 1, w - w2 - 1),
+	               MIN(h2 + s - 1, h - h2 - 1));
+	int r = (int)(((int64_t)MIN(w, h) + 1) / 3);
+	int64_t cx2 = 2 * (int64_t)w2 + s;
+	int64_t cy2 = 2 * (int64_t)h2 + s;
+	int64_t ox2, oy2, inner2, outer2, inner_sq, outer_sq;
+
+	if (r > maxr)
+		r = maxr;
+	/* Below this size a distinct round stroke cannot be represented. */
+	if (r <= s) {
+		if (bd & LL)
+			XftDrawRect(xd, fg, x, y + h2, w2 + s, s);
+		if (bd & LU)
+			XftDrawRect(xd, fg, x + w2, y, s, h2 + s);
+		if (bd & LR)
+			XftDrawRect(xd, fg, x + w2, y + h2, w - w2, s);
+		if (bd & LD)
+			XftDrawRect(xd, fg, x + w2, y + h2, s, h - h2);
+		return;
+	}
+
+	/* The circle center is one radius into both outgoing rays. */
+	ox2 = cx2 + ((bd & LR) ? 2 * (int64_t)r : -2 * (int64_t)r);
+	oy2 = cy2 + ((bd & LD) ? 2 * (int64_t)r : -2 * (int64_t)r);
+	inner2 = 2 * (int64_t)r - s;
+	outer2 = 2 * (int64_t)r + s;
+	inner_sq = inner2 * inner2;
+	outer_sq = outer2 * outer2;
+
+	/* Rasterize the quarter ring, merging each scanline into rectangles. */
+	for (py = 0; py < h; py++) {
+		run = -1;
+		for (px = 0; px < w; px++) {
+			int64_t px2 = 2 * (int64_t)px + 1;
+			int64_t py2 = 2 * (int64_t)py + 1;
+			int64_t dx = px2 - ox2;
+			int64_t dy = py2 - oy2;
+			int64_t dist_sq;
+			int inside;
+
+			inside = ((bd & LR) ? dx <= 0 : dx >= 0) &&
+			         ((bd & LD) ? dy <= 0 : dy >= 0) &&
+			         dx >= -outer2 && dx <= outer2 &&
+			         dy >= -outer2 && dy <= outer2;
+			if (inside) {
+				dist_sq = dx * dx + dy * dy;
+				inside = dist_sq >= inner_sq && dist_sq <= outer_sq;
+			}
+			if (inside && run < 0) {
+				run = px;
+			} else if (!inside && run >= 0) {
+				XftDrawRect(xd, fg, x + run, y + py, px - run, 1);
+				run = -1;
+			}
+		}
+		if (run >= 0)
+			XftDrawRect(xd, fg, x + run, y + py, w - run, 1);
+	}
+
+	/* Continue from both tangent points to the cell edges. */
+	if (bd & LL)
+		XftDrawRect(xd, fg, x, y + h2, w2 + s - r, s);
+	if (bd & LU)
+		XftDrawRect(xd, fg, x + w2, y, s, h2 + s - r);
+	if (bd & LR)
+		XftDrawRect(xd, fg, x + w2 + r, y + h2, w - w2 - r, s);
+	if (bd & LD)
+		XftDrawRect(xd, fg, x + w2, y + h2 + r, s, h - h2 - r);
+}
+
+void
 drawboxlines(int x, int y, int w, int h, XftColor *fg, ushort bd)
 {
 	/* s: stem thickness. width/8 roughly matches underscore thickness. */
@@ -141,14 +218,18 @@ drawboxlines(int x, int y, int w, int h, XftColor *fg, ushort bd)
 	int light = bd & (LL | LU | LR | LD);
 	int double_ = bd & (DL | DU | DR | DD);
 
+	if (bd & BDA) {
+		drawboxarc(x, y, w, h, fg, bd, s, w2, h2);
+		return;
+	}
+
 	if (light) {
 		/* d: additional (negative) length to not-draw the center   */
-		/* texel - at arcs and avoid drawing inside (some) doubles  */
-		int arc = bd & BDA;
+		/* texel to avoid drawing inside (some) doubles             */
 		int multi_light = light & (light - 1);
 		int multi_double = double_ & (double_ - 1);
 		/* light crosses double only at DH+LV, DV+LH (ref. shapes)  */
-		int d = arc || (multi_double && !multi_light) ? -s : 0;
+		int d = multi_double && !multi_light ? -s : 0;
 
 		if (bd & LL)
 			XftDrawRect(xd, fg, x, y + h2, w2 + s + d, s);
