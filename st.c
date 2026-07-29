@@ -1,5 +1,8 @@
 /* See LICENSE for license details. */
 #include <ctype.h>
+#ifdef DEBUG_WIDE
+#include <assert.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -209,6 +212,9 @@ static void tdumpline(int);
 static void tdump(void);
 static void tclearregion(int, int, int, int);
 static void tclearwide(int, int);
+#ifdef DEBUG_WIDE
+static void tcheckwide(int);
+#endif
 static void tcursor(int);
 static void tdeletechar(int);
 static void tdeleteline(int);
@@ -2394,6 +2400,59 @@ tclearwide(int x, int y)
 	}
 }
 
+#ifdef DEBUG_WIDE
+static int
+twidevalid(int y)
+{
+	Glyph *line;
+	int x;
+
+	if (!BETWEEN(y, 0, term.row-1))
+		return 0;
+
+	line = term.line[y];
+	for (x = 0; x < term.col; x++) {
+		if ((line[x].mode & ATTR_WIDE) &&
+		    (line[x].mode & ATTR_WDUMMY))
+			return 0;
+		if ((line[x].mode & ATTR_WIDE) &&
+		    (x+1 >= term.col || !(line[x+1].mode & ATTR_WDUMMY)))
+			return 0;
+		if ((line[x].mode & ATTR_WDUMMY) &&
+		    (x == 0 || !(line[x-1].mode & ATTR_WIDE)))
+			return 0;
+	}
+	return 1;
+}
+
+static void
+tcheckwide(int y)
+{
+	assert(twidevalid(y));
+}
+
+int
+tdebugwidewrite(const char *buf, int len)
+{
+	return twrite(buf, len, 0);
+}
+
+int
+tdebugwidecell(int x, int y, Glyph *gp)
+{
+	if (!BETWEEN(x, 0, term.col-1) || !BETWEEN(y, 0, term.row-1))
+		return 0;
+	*gp = term.line[y][x];
+	return 1;
+}
+
+int
+tdebugwidevalid(int y)
+{
+	return twidevalid(y);
+}
+#endif
+
 void
 trepairwide(int y)
 {
@@ -3789,20 +3848,23 @@ check_control_code:
 		gp = &term.line[term.c.y][term.c.x];
 	}
 
+	/*
+	 * A wide glyph and its dummy cell must be cleared as a pair
+	 * before either destination cell is overwritten.
+	 */
+	if (width == 2)
+		tclearwide(term.c.x+1, term.c.y);
 	tsetchar(u, &term.c.attr, term.c.x, term.c.y);
 	term.lastc = u;
 
-	if (width == 2) {
+	if (width == 2 && term.c.x+1 < term.col) {
 		gp->mode |= ATTR_WIDE;
-		if (term.c.x+1 < term.col) {
-			if (gp[1].mode == ATTR_WIDE && term.c.x+2 < term.col) {
-				gp[2].u = ' ';
-				gp[2].mode &= ~ATTR_WDUMMY;
-			}
-			gp[1].u = '\0';
-			gp[1].mode = ATTR_WDUMMY;
-		}
+		gp[1].u = '\0';
+		gp[1].mode = ATTR_WDUMMY;
 	}
+#ifdef DEBUG_WIDE
+	tcheckwide(term.c.y);
+#endif
 	if (term.c.x+width < term.col) {
 		tmoveto(term.c.x+width, term.c.y);
 	} else {

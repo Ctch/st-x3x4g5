@@ -136,6 +136,12 @@ size_t ttyread(void);
 void ttyresize(int, int);
 void ttywrite(const char *, size_t, int);
 
+#ifdef DEBUG_WIDE
+int tdebugwidewrite(const char *, int);
+int tdebugwidecell(int, int, Glyph *);
+int tdebugwidevalid(int);
+#endif
+
 int splitactive(void);
 int splitfocused(void);
 void splitfocusrow(int);
