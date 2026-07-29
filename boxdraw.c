@@ -132,7 +132,8 @@ drawboxarc(int x, int y, int w, int h, XftColor *fg, ushort bd, int s,
 	int px, py, run;
 	int maxr = MIN(MIN(w2 + s - 1, w - w2 - 1),
 	               MIN(h2 + s - 1, h - h2 - 1));
-	int r = (int)(((int64_t)MIN(w, h) + 1) / 3);
+	// int r = (int)(((int64_t)MIN(w, h) + 1) / 3);
+	int r = maxr;
 	int64_t cx2 = 2 * (int64_t)w2 + s;
 	int64_t cy2 = 2 * (int64_t)h2 + s;
 	int64_t ox2, oy2, inner2, outer2, inner_sq, outer_sq;
