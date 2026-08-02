@@ -163,7 +163,7 @@ static const char *colorname[] = {
     "#A6E3A1", /* Green */
     "#F9E2AF", /* Yellow */
     "#89B4FA", /* Blue */
-    "#F5C2E7", /* Pink */
+    "#CBA6F7", /* Mauve */
     "#94E2D5", /* Teal */
     "#BAC2DE", /* Subtext1 */
 
@@ -173,7 +173,7 @@ static const char *colorname[] = {
     "#A6E3A1", /* Green */
     "#F9E2AF", /* Yellow */
     "#89B4FA", /* Blue */
-    "#F5C2E7", /* Pink */
+    "#CA9EE6", /* Mauve */
     "#94E2D5", /* Teal */
     "#A6ADC8", /* Subtext0 */
 
