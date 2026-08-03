@@ -153,6 +153,7 @@ int tdebugwidevalid(int);
 #endif
 
 #ifdef DEBUG_SPLIT
+void tdebugsplitcwd(int, char *, size_t);
 void tdebugsplittrack(int, pid_t);
 int tdebugsplitisopen(void);
 #endif

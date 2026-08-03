@@ -17,6 +17,9 @@
 #include <sys/select.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#ifdef __OpenBSD__
+#include <sys/sysctl.h>
+#endif
 #include <termios.h>
 #include <unistd.h>
 #include <wchar.h>
@@ -264,6 +267,7 @@ static void drawregion(int, int, int, int);
 static void splitclose(void);
 static void splitclosepane(int);
 static void splitclear(void);
+static void splitcwd(char *, size_t);
 static void splitfreepane(int, int);
 static void splitfulldirt(void);
 static int splitisactive(int);
@@ -417,6 +421,17 @@ splitisopen(void)
 
 #ifdef DEBUG_SPLIT
 void
+tdebugsplitcwd(int fd, char *buf, size_t siz)
+{
+	int old = paneidx;
+
+	paneactivate(0);
+	panes[0].fd = fd;
+	splitcwd(buf, siz);
+	paneactivate(old);
+}
+
+void
 tdebugsplittrack(int fd, pid_t child)
 {
 	spliton = 1;
@@ -468,6 +483,10 @@ splitcwd(char *buf, size_t siz)
 	char path[64];
 	ssize_t n;
 	pid_t fg;
+#elif defined(__OpenBSD__)
+	int mib[3];
+	size_t len;
+	pid_t fg;
 #endif
 
 	if (!siz)
@@ -480,6 +499,19 @@ splitcwd(char *buf, size_t siz)
 			buf[n] = '\0';
 			return;
 		}
+	}
+#elif defined(__OpenBSD__)
+	if (cmdfd >= 0 && (fg = tcgetpgrp(cmdfd)) > 0) {
+		mib[0] = CTL_KERN;
+		mib[1] = KERN_PROC_CWD;
+		mib[2] = fg;
+		len = siz;
+		if (sysctl(mib, LEN(mib), buf, &len, NULL, 0) == 0 &&
+		    len > 0 && buf[0] != '\0') {
+			buf[siz - 1] = '\0';
+			return;
+		}
+		buf[0] = '\0';
 	}
 #endif
 	if (getcwd(buf, siz) == NULL)

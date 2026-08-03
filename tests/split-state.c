@@ -1,9 +1,21 @@
 #include <fcntl.h>
+#include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <wchar.h>
+
+#if defined(__linux__)
+#include <pty.h>
+#elif defined(__OpenBSD__) || defined(__NetBSD__) || defined(__APPLE__)
+#include <util.h>
+#elif defined(__FreeBSD__) || defined(__DragonFly__)
+#include <libutil.h>
+#endif
 
 #include "st.h"
 #include "win.h"
@@ -24,12 +36,58 @@ const int boxdraw = 0;
 const int boxdraw_bold = 0;
 const int boxdraw_braille = 0;
 
+static int
+test_split_cwd(void)
+{
+	char actual[PATH_MAX], ready;
+	char dirname[] = "/tmp/st-split-cwd.XXXXXXXX";
+	pid_t child;
+	int failed = 0, master;
+
+	if (mkdtemp(dirname) == NULL) {
+		perror("mkdtemp");
+		return 1;
+	}
+	if ((child = forkpty(&master, NULL, NULL, NULL)) < 0) {
+		perror("forkpty");
+		rmdir(dirname);
+		return 1;
+	}
+	if (child == 0) {
+		if (chdir(dirname) < 0 || write(STDOUT_FILENO, "R", 1) != 1)
+			_exit(2);
+		pause();
+		_exit(0);
+	}
+
+	if (read(master, &ready, 1) != 1 || ready != 'R') {
+		fprintf(stderr, "FAIL: cwd child did not become ready\n");
+		failed = 1;
+	} else {
+		tdebugsplitcwd(master, actual, sizeof actual);
+		if (strcmp(actual, dirname) != 0) {
+			fprintf(stderr, "FAIL: split cwd is %s, expected %s\n",
+			        actual, dirname);
+			failed = 1;
+		}
+	}
+
+	kill(child, SIGTERM);
+	waitpid(child, NULL, 0);
+	close(master);
+	rmdir(dirname);
+	return failed;
+}
+
 int
 main(void)
 {
 	struct timespec delay = { .tv_nsec = 10000000 };
 	pid_t child;
 	int fd, i;
+
+	if (test_split_cwd())
+		return 1;
 
 	if ((fd = open("/dev/null", O_RDWR)) < 0) {
 		perror("open /dev/null");
