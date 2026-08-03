@@ -152,6 +152,11 @@ int tdebugwidecell(int, int, Glyph *);
 int tdebugwidevalid(int);
 #endif
 
+#ifdef DEBUG_SPLIT
+void tdebugsplittrack(int, pid_t);
+int tdebugsplitisopen(void);
+#endif
+
 int splitactive(void);
 int splitfocused(void);
 void splitfocusrow(int);

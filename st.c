@@ -267,6 +267,7 @@ static void splitclear(void);
 static void splitfreepane(int, int);
 static void splitfulldirt(void);
 static int splitisactive(int);
+static int splitisopen(void);
 static void splitlayout(int, int *, int *);
 static int splitrunoscallowed(void);
 static void splitrunoscclear(void);
@@ -315,7 +316,6 @@ static int splitcols, splitrows_total, splittw, splitth;
 static int splittoprows;
 static int splitrunoscpane = -1;
 static time_t splitrunoscdeadline;
-static volatile sig_atomic_t childexited;
 static int iofd = 1;
 static char *splitshell;
 int disableda = 0;
@@ -405,8 +405,32 @@ splitfocused(void)
 static int
 splitisactive(int n)
 {
-	return n == 0 || (spliton && panes[n].alive);
+	return n == 0 || (n == 1 && spliton && panes[n].alive);
 }
+
+static int
+splitisopen(void)
+{
+	return spliton && panes[1].alive && panes[1].fd >= 0 &&
+	       panes[1].child > 0;
+}
+
+#ifdef DEBUG_SPLIT
+void
+tdebugsplittrack(int fd, pid_t child)
+{
+	spliton = 1;
+	panes[1].alive = 1;
+	panes[1].fd = fd;
+	panes[1].child = child;
+}
+
+int
+tdebugsplitisopen(void)
+{
+	return splitisopen();
+}
+#endif
 
 static void
 splitlayout(int rows, int *top, int *bottom)
@@ -525,7 +549,7 @@ splitfocus(const Arg *arg)
 {
 	int n = arg->i;
 
-	if (!spliton)
+	if (!splitisactive(1))
 		return;
 	if (n < 0)
 		n = focuspane ? 0 : 1;
@@ -538,7 +562,7 @@ splitadjust(const Arg *arg)
 {
 	int avail;
 
-	if (!spliton || splitrows_total < 3)
+	if (!splitisactive(1) || splitrows_total < 3)
 		return;
 	avail = splitrows_total - 1;
 	splittoprows = panes[0].rows + arg->i;
@@ -553,7 +577,7 @@ splitclear(void)
 {
 	int old = paneidx;
 
-	if (!spliton || !panes[1].alive)
+	if (!splitisopen())
 		return;
 
 	paneactivate(1);
@@ -570,7 +594,7 @@ splitruntext(const char *text)
 {
 	int old = paneidx;
 
-	if (!spliton || !panes[1].alive || text == NULL || text[0] == '\0')
+	if (!splitisopen() || text == NULL || text[0] == '\0')
 		return;
 
 	paneactivate(1);
@@ -630,7 +654,8 @@ splitrunselection(const Arg *arg)
 	char *seltext;
 	int old = paneidx;
 
-	if (!spliton || !panes[1].alive) {
+	ttyreap();
+	if (!splitisopen()) {
 		splitspawn();
 		if (splitisactive(old))
 			splitsetfocus(old);
@@ -678,9 +703,9 @@ splitrow(int row)
 void
 splitfocusrow(int row)
 {
-	if (spliton && panes[1].alive && row == panes[1].yoff - 1)
+	if (splitisactive(1) && row == panes[1].yoff - 1)
 		return;
-	if (spliton && panes[1].alive && row >= panes[1].yoff)
+	if (splitisactive(1) && row >= panes[1].yoff)
 		splitsetfocus(1);
 	else
 		splitsetfocus(0);
@@ -1537,7 +1562,7 @@ execsh(char *cmd, char **args)
 void
 sigchld(int a)
 {
-	childexited = 1;
+	(void)a;
 }
 
 void
@@ -1546,10 +1571,17 @@ ttyreap(void)
 	int i, stat;
 	pid_t p;
 
-	if (!childexited)
-		return;
-	childexited = 0;
-	while ((p = waitpid(-1, &stat, WNOHANG)) > 0) {
+	/*
+	 * SIGCHLD only wakes pselect().  Always probe for exited children here:
+	 * a one-bit signal flag can lose a wake-up if waitpid() is interrupted,
+	 * especially when several events arrive together after resume.
+	 */
+	for (;;) {
+		p = waitpid(-1, &stat, WNOHANG);
+		if (p < 0 && errno == EINTR)
+			continue;
+		if (p <= 0)
+			break;
 		for (i = 0; i < LEN(panes); i++)
 			if (panes[i].child == p)
 				break;
@@ -1574,7 +1606,6 @@ static void
 ttyeof(int n)
 {
 	if (panes[n].child > 0) {
-		childexited = 1;
 		return;
 	}
 	if (n == 0) {
@@ -1830,13 +1861,13 @@ splitupdatelayout(void)
 
 	if (splitrows_total < 1 || splitcols < 1)
 		return;
-	if (spliton && splitrows_total < 3)
+	if (splitisactive(1) && splitrows_total < 3)
 		splitclose();
 
 	splitlayout(splitrows_total, &top, &bottom);
 	if (splittoprows > 0)
 		splittoprows = top;
-	if (!spliton) {
+	if (!splitisactive(1)) {
 		focuspane = 0;
 		panes[0].yoff = 0;
 		panes[0].rows = splitrows_total;
@@ -1883,7 +1914,12 @@ splitspawn(void)
 	char cwd[PATH_MAX];
 	int top, bottom, old = paneidx;
 
-	if (spliton || splitrows_total < 3)
+	if (splitisopen())
+		return;
+	/* Discard a partially torn-down pane before reusing its slot. */
+	if (spliton || panes[1].alive)
+		splitclosepane(1);
+	if (splitrows_total < 3)
 		return;
 
 	splitcwd(cwd, sizeof cwd);
@@ -1967,7 +2003,7 @@ splitpromote(void)
 {
 	Pane promoted;
 
-	if (!spliton || !panes[1].alive)
+	if (!splitisopen())
 		return 0;
 
 	promoted = panes[1];
@@ -1998,7 +2034,8 @@ splitpromote(void)
 void
 splittoggle(const Arg *arg)
 {
-	if (spliton)
+	ttyreap();
+	if (splitisopen())
 		splitclose();
 	else
 		splitspawn();
@@ -4195,7 +4232,7 @@ draw(void)
 		    (ocx != term.ocx || ocy != term.ocy))
 			ime = 1;
 	}
-	if (spliton && panes[1].alive)
+	if (splitisactive(1))
 		xdrawseparator(panes[1].yoff - 1);
 	paneactivate(focuspane);
 	xsetpanemode(focuspane);
