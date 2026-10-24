@@ -1,34 +1,22 @@
-st - simple terminal
---------------------
-st is a simple terminal emulator for X which sucks less.
+# 个人魔改版本的 st
+
+这个 st 有大量魔改代码, 所以可能已经不那么 suckless 了.
+
+包括一些非常有局限性的特性, 比如:
+1. 可以 Alt + Enter 开关一个水平分屏, 然后 Alt + j/k 上下切换分屏.
+  为了简单, 有且只有一个水平分屏.
+2. 有一个简易的光标拖尾动画效果, 可惜只是在两个光标位置之间做了插值,
+  所以没有 kitty 效果那么好.
+3. 包含一个 vi copy 的状态, Alt + q 可以进入这个效果,
+  然后可以用有限的几个 vi 快捷键:
+  用 v 选中文本,
+  用 j k { } 滚动屏幕, (抱歉没有其他滚动的快捷键了).
+4. 我还做了一些视觉上的优化, 比如终端绘制水平和垂直分割线,
+  避免在设置了文字之间的间距后, 分割线出现断裂.
+
+上面这些改动目前都在 develop 分支上.
+经过上面这些魔改之后, 要在这个代码上打补丁已经是非常困难的了.
+不过这个时代有 ai, 这个项目还算比较小...
 
 
-Requirements
-------------
-In order to build st you need the Xlib header files.
-
-
-Installation
-------------
-Edit config.mk to match your local setup (st is installed into
-the /usr/local namespace by default).
-
-Afterwards enter the following command to build and install st (if
-necessary as root):
-
-    make clean install
-
-
-Running st
-----------
-If you did not install st with make clean install, you must compile
-the st terminfo entry with the following command:
-
-    tic -sx st.info
-
-See the man page for additional details.
-
-Credits
--------
-Based on Aurélien APTEL <aurelien dot aptel at gmail dot com> bt source code.
 
